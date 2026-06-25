@@ -259,7 +259,7 @@ struct SettingsView: View {
                 Label("Connectors", systemImage: "cable.connector")
             }
         }
-        .frame(width: 600, height: 380)
+        .frame(width: 650, height: 520)
     }
     
     private func isSensitiveKey(_ name: String) -> Bool {

@@ -40,12 +40,14 @@ public struct StreamSequence: AsyncBufferedSequence, Sendable {
 }
 
 public actor Session {
-    public let id: String
+    public nonisolated let id: String
+    public nonisolated let connectorName: String
     private let bridge: ProcessBridge
     private let continuation: AsyncStream<UInt8>.Continuation
     
-    public init(id: String, bridge: ProcessBridge, continuation: AsyncStream<UInt8>.Continuation) {
+    public init(id: String, connectorName: String, bridge: ProcessBridge, continuation: AsyncStream<UInt8>.Continuation) {
         self.id = id
+        self.connectorName = connectorName
         self.bridge = bridge
         self.continuation = continuation
     }
@@ -144,7 +146,7 @@ public actor SSEServer {
             let resolvedEnv = await self.manager.resolveEnvironment(for: connector)
             let bridge = ProcessBridge(connector: connector, env: resolvedEnv)
             
-            let session = Session(id: sessionId, bridge: bridge, continuation: continuation)
+            let session = Session(id: sessionId, connectorName: connectorName, bridge: bridge, continuation: continuation)
             await self.registerSession(id: sessionId, session: session)
             
             do {
@@ -237,6 +239,39 @@ public actor SSEServer {
             }
         }
         
+        // POST webhook route: POST /:connector/webhook
+        handler.appendRoute("POST /:connector/webhook") { [weak self] request in
+            logMessage("POST /:connector/webhook requested")
+            guard let self = self else {
+                return HTTPResponse(statusCode: .internalServerError)
+            }
+            
+            // 1. Auth check
+            guard await self.isAuthorized(request) else {
+                logMessage("POST /:connector/webhook unauthorized request")
+                return HTTPResponse(statusCode: .unauthorized, body: "Unauthorized\n".data(using: .utf8)!)
+            }
+            logMessage("POST /:connector/webhook auth passed")
+            
+            guard let connectorName = request.routeParameters["connector"] else {
+                logMessage("POST /:connector/webhook missing connector parameter")
+                return HTTPResponse(statusCode: .badRequest, body: "Missing connector parameter\n".data(using: .utf8)!)
+            }
+            
+            do {
+                let bodyData = try await request.bodyData
+                let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
+                logMessage("POST /:connector/webhook body size: \(bodyData.count) bytes")
+                
+                await self.broadcastWebhook(connectorName: connectorName, payload: bodyString)
+                
+                return HTTPResponse(statusCode: .ok, body: "Webhook broadcasted\n".data(using: .utf8)!)
+            } catch {
+                logMessage("POST /:connector/webhook error: \(error)")
+                return HTTPResponse(statusCode: .internalServerError, body: "Failed to read request body\n".data(using: .utf8)!)
+            }
+        }
+        
         // Catch-all route to prevent crashing/unmatched requests
         handler.appendRoute("*") { _ in
             return HTTPResponse(statusCode: .notFound, body: "Not Found\n".data(using: .utf8)!)
@@ -275,5 +310,43 @@ public actor SSEServer {
     
     private func getSession(id: String) -> Session? {
         sessions[id]
+    }
+    
+    public func broadcastWebhook(connectorName: String, payload: String) async {
+        logMessage("SSEServer.broadcastWebhook: Broadcasting webhook for '\(connectorName)'")
+        
+        let payloadObj: Any
+        if let data = payload.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data, options: []) {
+            payloadObj = json
+        } else {
+            payloadObj = payload
+        }
+        
+        let notification: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": "notifications/webhook",
+            "params": [
+                "connector": connectorName,
+                "payload": payloadObj
+            ]
+        ]
+        
+        guard let data = try? JSONSerialization.data(withJSONObject: notification, options: []),
+              let jsonStr = String(data: data, encoding: .utf8) else {
+            logMessage("SSEServer.broadcastWebhook: Failed to serialize JSON-RPC notification")
+            return
+        }
+        
+        let sseEvent = "event: message\ndata: \(jsonStr)\n\n"
+        
+        var count = 0
+        for session in sessions.values {
+            if session.connectorName == connectorName {
+                await session.writeToSSE(sseEvent)
+                count += 1
+            }
+        }
+        logMessage("SSEServer.broadcastWebhook: Sent to \(count) sessions")
     }
 }

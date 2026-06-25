@@ -57,6 +57,7 @@ public actor ConnectorManager {
     
     public func discoverConnectors() async -> [Connector] {
         var discovered: [Connector] = []
+        var seenNames: Set<String> = []
         let fileManager = FileManager.default
         let url = URL(fileURLWithPath: connectorsPath)
         
@@ -67,15 +68,18 @@ public actor ConnectorManager {
         while let folderURL = enumerator.nextObject() as? URL {
             var isDir: ObjCBool = false
             if fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDir), isDir.boolValue {
-                // Look for .mcp.json or .antigravity-plugin/mcp_config.json
+                // Look for .mcp.json, .antigravity-plugin/mcp_config.json, or .claude-plugin/plugin.json
                 let mcpJsonURL = folderURL.appendingPathComponent(".mcp.json")
                 let antigravityJsonURL = folderURL.appendingPathComponent(".antigravity-plugin/mcp_config.json")
+                let claudeJsonURL = folderURL.appendingPathComponent(".claude-plugin/plugin.json")
                 
                 let targetURL: URL
                 if fileManager.fileExists(atPath: mcpJsonURL.path) {
                     targetURL = mcpJsonURL
                 } else if fileManager.fileExists(atPath: antigravityJsonURL.path) {
                     targetURL = antigravityJsonURL
+                } else if fileManager.fileExists(atPath: claudeJsonURL.path) {
+                    targetURL = claudeJsonURL
                 } else {
                     continue
                 }
@@ -92,27 +96,50 @@ public actor ConnectorManager {
                         }
                         
                         for (serverName, serverVal) in servers {
-                            if let serverDict = serverVal as? [String: Any],
-                               let command = serverDict["command"] as? String {
-                                let args = (serverDict["args"] as? [String]) ?? []
-                                var env = (serverDict["env"] as? [String: String]) ?? [:]
-                                
-                                // Expand path placeholder ${ANTIGRAVITY_PLUGIN_ROOT}
-                                let absolutePluginPath = folderURL.path
-                                for (key, value) in env {
-                                    env[key] = value.replacingOccurrences(of: "${ANTIGRAVITY_PLUGIN_ROOT}", with: absolutePluginPath)
-                                }
-                                let finalCommand = command.replacingOccurrences(of: "${ANTIGRAVITY_PLUGIN_ROOT}", with: absolutePluginPath)
-                                let finalArgs = args.map { $0.replacingOccurrences(of: "${ANTIGRAVITY_PLUGIN_ROOT}", with: absolutePluginPath) }
-                                
-                                discovered.append(Connector(
-                                    name: serverName,
-                                    directoryPath: folderURL.path,
-                                    command: finalCommand,
-                                    args: finalArgs,
-                                    env: env
-                                ))
+                            guard let serverDict = serverVal as? [String: Any] else { continue }
+                            
+                            // Skip URL-only / HTTP-hosted servers — they don't need Bridgeport
+                            // (e.g. sosumi with "type":"http","url":... or agent-tinyfish-ai with just "url":...)
+                            if serverDict["url"] != nil && serverDict["command"] == nil {
+                                logMessage("ConnectorManager: Skipping web-hosted MCP '\(serverName)' (has URL, no command)")
+                                continue
                             }
+                            
+                            guard let command = serverDict["command"] as? String else { continue }
+                            
+                            // Deduplicate by connector name (first discovery wins)
+                            guard !seenNames.contains(serverName) else {
+                                logMessage("ConnectorManager: Skipping duplicate connector '\(serverName)' from \(folderURL.path)")
+                                continue
+                            }
+                            seenNames.insert(serverName)
+                            
+                            let args = (serverDict["args"] as? [String]) ?? []
+                            var env = (serverDict["env"] as? [String: String]) ?? [:]
+                            
+                            // Expand path placeholders ${ANTIGRAVITY_PLUGIN_ROOT} and ${CLAUDE_PLUGIN_ROOT}
+                            let absolutePluginPath = folderURL.path
+                            for (key, value) in env {
+                                var expanded = value.replacingOccurrences(of: "${ANTIGRAVITY_PLUGIN_ROOT}", with: absolutePluginPath)
+                                expanded = expanded.replacingOccurrences(of: "${CLAUDE_PLUGIN_ROOT}", with: absolutePluginPath)
+                                env[key] = expanded
+                            }
+                            var finalCommand = command.replacingOccurrences(of: "${ANTIGRAVITY_PLUGIN_ROOT}", with: absolutePluginPath)
+                            finalCommand = finalCommand.replacingOccurrences(of: "${CLAUDE_PLUGIN_ROOT}", with: absolutePluginPath)
+                            
+                            let finalArgs = args.map { arg in
+                                var expanded = arg.replacingOccurrences(of: "${ANTIGRAVITY_PLUGIN_ROOT}", with: absolutePluginPath)
+                                expanded = expanded.replacingOccurrences(of: "${CLAUDE_PLUGIN_ROOT}", with: absolutePluginPath)
+                                return expanded
+                            }
+                            
+                            discovered.append(Connector(
+                                name: serverName,
+                                directoryPath: folderURL.path,
+                                command: finalCommand,
+                                args: finalArgs,
+                                env: env
+                            ))
                         }
                     }
                 } catch {
@@ -121,7 +148,7 @@ public actor ConnectorManager {
             }
         }
         
-        return discovered
+        return discovered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     public func resolveEnvironment(for connector: Connector) async -> [String: String] {

@@ -33,6 +33,7 @@ def run_tests():
         stderr_file = open("server_stderr.log", "w")
         server_process = subprocess.Popen([
             exec_path,
+            "--server",
             "--port", str(PORT),
             "--token", TOKEN,
             "--connectors-path", CONNECTORS_PATH

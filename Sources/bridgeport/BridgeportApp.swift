@@ -15,20 +15,23 @@ struct BridgeportApp: App {
     @Environment(\.openSettings) private var openSettings
     
     var body: some Scene {
-        MenuBarExtra("Bridgeport", systemImage: "app.connected.to.app.below.fill") {
-            Text("Bridgeport Gateway")
+        MenuBarExtra("Bridgeport", systemImage: appState.isDaemonRunning ? "app.connected.to.app.below.fill" : "app.connected.to.app.below") {
+            // Title section
+            Text("Bridgeport")
                 .font(.headline)
+            
+            let enabledCount = appState.discoveredConnectors.filter { !appState.disabledConnectors.contains($0.name) }.count
+            let totalCount = appState.discoveredConnectors.count
+            Text("\(enabledCount)/\(totalCount) connectors active")
+                .font(.caption)
             
             Divider()
             
             if appState.discoveredConnectors.isEmpty {
-                Text("No Connectors Discovered")
-                    .foregroundColor(.secondary)
+                Button("No Connectors Discovered (Configure Path...)") {
+                    openSettingsWindow()
+                }
             } else {
-                Text("Connectors:")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
                 ForEach(appState.discoveredConnectors, id: \.name) { connector in
                     Toggle(connector.name, isOn: Binding(
                         get: { !appState.disabledConnectors.contains(connector.name) },
@@ -43,17 +46,23 @@ struct BridgeportApp: App {
             
             Divider()
             
-            HStack {
-                Text("Daemon Status:")
-                Text(appState.isDaemonRunning ? "Running" : "Stopped")
-                    .foregroundColor(appState.isDaemonRunning ? .green : .red)
+            // Daemon status as a button
+            Button {
+                Task {
+                    if appState.isDaemonRunning {
+                        await appState.restartDaemon()
+                    } else {
+                        await appState.installDaemon()
+                    }
+                }
+            } label: {
+                let status = appState.isDaemonRunning ? "● Running" : "○ Stopped"
+                let action = appState.isDaemonRunning ? "Click to Restart" : "Click to Start"
+                Text("Daemon: \(status) — \(action)")
             }
             
             Button("Settings...") {
-                // Open standard SwiftUI Settings panel
-                openSettings()
-                // Force window activation to bring settings to the front
-                NSApp.activate(ignoringOtherApps: true)
+                openSettingsWindow()
             }
             .keyboardShortcut(",", modifiers: .command)
             
@@ -68,5 +77,10 @@ struct BridgeportApp: App {
         Settings {
             SettingsView(appState: appState)
         }
+    }
+    
+    private func openSettingsWindow() {
+        openSettings()
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

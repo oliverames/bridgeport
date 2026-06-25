@@ -16,10 +16,11 @@ func runShell(_ executable: String, _ arguments: [String]) -> (status: Int32, st
     
     do {
         try process.run()
-        process.waitUntilExit()
         
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        
+        process.waitUntilExit()
         
         let stdoutStr = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderrStr = String(data: stderrData, encoding: .utf8) ?? ""
