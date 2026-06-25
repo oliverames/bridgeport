@@ -12,6 +12,26 @@ public struct Connector: Sendable {
     public let command: String
     public let args: [String]
     public var env: [String: String]
+    
+    public var requiredEnvVarNames: [String] {
+        var names: [String] = []
+        let pattern = "\\$\\{([^}]+)\\}"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        
+        for (_, val) in env {
+            let nsRange = NSRange(val.startIndex..<val.endIndex, in: val)
+            let matches = regex.matches(in: val, options: [], range: nsRange)
+            for match in matches {
+                if let varRange = Range(match.range(at: 1), in: val) {
+                    let varName = String(val[varRange])
+                    if varName != "ANTIGRAVITY_PLUGIN_ROOT" && varName != "CLAUDE_PLUGIN_ROOT" {
+                        names.append(varName)
+                    }
+                }
+            }
+        }
+        return Array(Set(names)).sorted()
+    }
 }
 
 public actor ConnectorManager {

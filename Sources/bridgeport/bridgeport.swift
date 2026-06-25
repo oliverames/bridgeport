@@ -58,11 +58,15 @@ struct bridgeport {
         #endif
         
         var daemonAction: String? = nil
+        var isServerMode = false
         
         let args = CommandLine.arguments
         var i = 1
         while i < args.count {
             switch args[i] {
+            case "--server":
+                isServerMode = true
+                i += 1
             case "--daemon-install":
                 daemonAction = "install"
                 i += 1
@@ -101,7 +105,7 @@ struct bridgeport {
                 }
             default:
                 print("Unknown argument: \(args[i])")
-                print("Usage: bridgeport [--port <port>] [--token <token>] [--connectors-path <path>] [--daemon-install] [--daemon-uninstall] [--daemon-status] [--rotate-token]")
+                print("Usage: bridgeport [--port <port>] [--token <token>] [--connectors-path <path>] [--daemon-install] [--daemon-uninstall] [--daemon-status] [--rotate-token] [--server]")
                 exit(1)
             }
         }
@@ -159,6 +163,7 @@ struct bridgeport {
                     <key>ProgramArguments</key>
                     <array>
                         <string>\(destURL.path)</string>
+                        <string>--server</string>
                     </array>
                     <key>KeepAlive</key>
                     <true/>
@@ -247,6 +252,16 @@ struct bridgeport {
             }
         }
         
+        if !isServerMode {
+            #if os(macOS)
+            BridgeportApp.main()
+            #else
+            print("GUI mode is only supported on macOS.")
+            exit(1)
+            #endif
+            return
+        }
+        
         // Resolve token from env if not set in config/args
         if token == nil {
             token = ProcessInfo.processInfo.environment["BRIDGEPORT_TOKEN"]
@@ -268,28 +283,33 @@ struct bridgeport {
         config.connectorsPath = connectorsPath
         await configManager.save(config)
         
-        print("Initializing Bridgeport with connectors path: \(connectorsPath)")
+        logMessage("Initializing Bridgeport with connectors path: \(connectorsPath)")
         
         let manager = ConnectorManager(connectorsPath: connectorsPath)
         
         // Discover connectors
         let connectors = await manager.discoverConnectors()
         if connectors.isEmpty {
-            print("Warning: No connectors found at \(connectorsPath)")
+            logMessage("Warning: No connectors found at \(connectorsPath)")
         } else {
-            print("Discovered \(connectors.count) connector(s):")
+            logMessage("Discovered \(connectors.count) connector(s):")
             for connector in connectors {
-                print("  - \(connector.name) (\(connector.directoryPath))")
-                print("    Public URL: http://localhost:\(port)/\(connector.name)/sse?token=\(finalToken)")
+                logMessage("  - \(connector.name) (\(connector.directoryPath))")
+                logMessage("    Public URL: http://localhost:\(port)/\(connector.name)/sse?token=\(finalToken)")
             }
         }
         
-        let server = SSEServer(port: port, token: finalToken, manager: manager)
+        let disabledConnectors = config.disabledConnectors ?? []
+        
+        // Write the client MCP config file for other applications/clients to read
+        await configManager.writeMcpClientConfig(port: port, token: finalToken, connectors: connectors, disabledConnectors: disabledConnectors)
+        
+        let server = SSEServer(port: port, token: finalToken, manager: manager, disabledConnectors: disabledConnectors)
         
         do {
             try await server.start()
         } catch {
-            print("Server error: \(error)")
+            logMessage("Server error: \(error)")
             exit(1)
         }
     }

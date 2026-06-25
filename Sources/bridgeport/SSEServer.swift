@@ -73,14 +73,16 @@ public actor SSEServer {
     private let port: UInt16
     private let token: String
     private let manager: ConnectorManager
+    private let disabledConnectors: [String]
     private var server: HTTPServer?
     private var sessions: [String: Session] = [:] // Session ID -> Session
     private var connectorBridges: [String: ProcessBridge] = [:] // Connector Name -> active ProcessBridge
     
-    public init(port: UInt16, token: String, manager: ConnectorManager) {
+    public init(port: UInt16, token: String, manager: ConnectorManager, disabledConnectors: [String] = []) {
         self.port = port
         self.token = token
         self.manager = manager
+        self.disabledConnectors = disabledConnectors
     }
     
     public func start() async throws {
@@ -113,6 +115,11 @@ public actor SSEServer {
             guard let connector = connectors.first(where: { $0.name == connectorName }) else {
                 logMessage("GET /:connector/sse connector '\(connectorName)' not found")
                 return HTTPResponse(statusCode: .notFound, body: "Connector '\(connectorName)' not found\n".data(using: .utf8)!)
+            }
+            
+            if self.disabledConnectors.contains(connectorName) {
+                logMessage("GET /:connector/sse connector '\(connectorName)' is disabled")
+                return HTTPResponse(statusCode: .notFound, body: "Connector '\(connectorName)' is disabled\n".data(using: .utf8)!)
             }
             
             print("Client connecting to SSE for '\(connectorName)'")
