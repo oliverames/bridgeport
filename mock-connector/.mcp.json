@@ -1,0 +1,12 @@
+{
+  "mock-echo": {
+    "command": "python3",
+    "args": [
+      "-u",
+      "${ANTIGRAVITY_PLUGIN_ROOT}/echo_server.py"
+    ],
+    "env": {
+      "MOCK_ENV_VAR": "hello-world"
+    }
+  }
+}
