@@ -564,7 +564,28 @@ public actor ConfigManager {
         while path.hasSuffix("/") {
             path.removeLast()
         }
-        return path.isEmpty ? "mcp" : path
+        let allowedScalars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        var sanitized = ""
+        var previousWasSeparator = false
+
+        for scalar in path.unicodeScalars {
+            if allowedScalars.contains(scalar) {
+                sanitized.unicodeScalars.append(scalar)
+                previousWasSeparator = false
+            } else if !previousWasSeparator {
+                sanitized.append("-")
+                previousWasSeparator = true
+            }
+        }
+
+        while sanitized.hasPrefix("-") || sanitized.hasPrefix(".") {
+            sanitized.removeFirst()
+        }
+        while sanitized.hasSuffix("-") || sanitized.hasSuffix(".") {
+            sanitized.removeLast()
+        }
+
+        return sanitized.isEmpty ? "mcp" : sanitized
     }
 
     public static func defaultAllowedOrigins(port: UInt16, publicBaseURL: String?) -> [String] {
@@ -610,6 +631,18 @@ public actor ConfigManager {
         return candidates[0].path
     }
 
+    public static func defaultClaudeSettingsPath() -> String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.json")
+            .path
+    }
+
+    public static func defaultCodexConfigPath() -> String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/config.toml")
+            .path
+    }
+
     public static func defaultAdditionalConnectorPaths(excluding primaryPath: String? = nil) -> [String] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let projects = home.appendingPathComponent("Developer/Projects")
@@ -618,7 +651,8 @@ public actor ConfigManager {
             projects.appendingPathComponent("ames-plugins/plugins"),
             projects.appendingPathComponent("ames-connectors/plugins"),
             projects.appendingPathComponent("ynab-mcp-server"),
-            home.appendingPathComponent(".claude/settings.json"),
+            URL(fileURLWithPath: defaultClaudeSettingsPath()),
+            URL(fileURLWithPath: defaultCodexConfigPath()),
             home.appendingPathComponent(".claude/plugins/cache/apple-notes-mcp/apple-notes/2.5.3"),
             home.appendingPathComponent(".claude/plugins/cache/apple-notes-mcp-ames/apple-notes/1.4.3")
         ]
@@ -651,9 +685,15 @@ public actor ConfigManager {
         return token + String((0..<32).map { _ in letters.randomElement()! })
     }
 
-    private static func loadDefaultEnvFromClaude() -> [String: String] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let claudeSettingsURL = home.appendingPathComponent(".claude/settings.json")
+    public static func defaultEnvReferences(claudeEnvURL: URL, claudeSettingsURL: URL) -> [String: String] {
+        if let text = try? String(contentsOf: claudeEnvURL, encoding: .utf8) {
+            let values = ConnectorManager.parseDotenv(text)
+            let opReferences = values.filter { $0.value.hasPrefix("op://") }
+            if !opReferences.isEmpty {
+                return opReferences
+            }
+        }
+
         guard let data = try? Data(contentsOf: claudeSettingsURL),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let env = json["env"] as? [String: String] else {
@@ -662,10 +702,32 @@ public actor ConfigManager {
 
         var filtered: [String: String] = [:]
         for (key, val) in env {
-            if key.contains("TOKEN") || key.contains("KEY") || key.contains("SECRET") || key.contains("ID") || key.contains("PATH") {
+            if val.hasPrefix("op://") || isNonSecretPathValue(key: key, value: val) {
                 filtered[key] = val
             }
         }
         return filtered
+    }
+
+    private static func loadDefaultEnvFromClaude() -> [String: String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let claudeEnvURL = home.appendingPathComponent(".claude/.env")
+        let claudeSettingsURL = home.appendingPathComponent(".claude/settings.json")
+        return defaultEnvReferences(claudeEnvURL: claudeEnvURL, claudeSettingsURL: claudeSettingsURL)
+    }
+
+    private static func isNonSecretPathValue(key: String, value: String) -> Bool {
+        let upperKey = key.uppercased()
+        let lowerValue = value.lowercased()
+        guard upperKey.hasSuffix("PATH") || upperKey.hasSuffix("DIR") || upperKey == "PATH" else {
+            return false
+        }
+        guard !upperKey.contains("TOKEN"),
+              !upperKey.contains("KEY"),
+              !upperKey.contains("SECRET"),
+              !upperKey.contains("PASSWORD") else {
+            return false
+        }
+        return value.hasPrefix("/") || value.hasPrefix("~") || lowerValue.contains("${")
     }
 }

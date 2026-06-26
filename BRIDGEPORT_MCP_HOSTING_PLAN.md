@@ -35,6 +35,7 @@ Bridgeport should not host:
   - `.antigravity-plugin/mcp_config.json`
   - `.hermes-plugin/plugin.json`
   - `.claude/settings.json`
+  - `.codex/config.toml`
 - Relative `mcpServers` manifest pointers, such as `"./.mcp.json"`.
 - Import MCP definitions into Bridgeport config.
 - Mirror MCP definitions from external files or directories.
@@ -70,7 +71,8 @@ Primary file: `~/.config/bridgeport/config.json`.
   "connectorsPath": "/Users/oliverames/Developer/Projects/ames-connectors/plugins",
   "additionalConnectorPaths": [
     "/Users/oliverames/Developer/Projects/ynab-mcp-server",
-    "/Users/oliverames/.claude/settings.json"
+    "/Users/oliverames/.claude/settings.json",
+    "/Users/oliverames/.codex/config.toml"
   ],
   "importedConnectors": {},
   "connectorSettings": {
@@ -163,7 +165,11 @@ Release-candidate defaults:
 - Localhost bind by default.
 - Query-string token auth disabled by default.
 - No request-body logging.
+- Constant-time bearer-token comparisons.
+- One MiB request-body limit for JSON-RPC and webhook posts.
+- Public route paths normalized to a safe single path segment.
 - `op://` values resolved at process start instead of persisted in generated client config.
+- Default Bridgeport env values are seeded from the canonical `~/.claude/.env` `op://` map, not plaintext Claude settings values.
 - Public exposure requires a per-connector toggle.
 - URL-only web-hosted MCPs are skipped.
 

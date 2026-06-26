@@ -4,6 +4,14 @@ public struct MCPServiceConfig: Codable, Sendable {
     public let command: String
     public let args: [String]?
     public let env: [String: String]?
+    public let url: String?
+
+    public init(command: String, args: [String]? = nil, env: [String: String]? = nil, url: String? = nil) {
+        self.command = command
+        self.args = args
+        self.env = env
+        self.url = url
+    }
 }
 
 public struct Connector: Sendable {
@@ -138,6 +146,8 @@ public actor ConnectorManager {
             let url = URL(fileURLWithPath: path)
             if isClaudeSettingsFile(url) {
                 discoverConnectors(inClaudeSettingsFile: url, discovered: &discovered, seenNames: &seenNames)
+            } else if isCodexConfigFile(url) {
+                discoverConnectors(inCodexConfigFile: url, discovered: &discovered, seenNames: &seenNames)
             } else if isDir.boolValue {
                 discoverConnectors(inDirectory: url, discovered: &discovered, seenNames: &seenNames)
             } else {
@@ -224,7 +234,12 @@ public actor ConnectorManager {
                     continue
                 }
 
-                guard let command = serverDict["command"] as? String else { continue }
+                guard let rawCommand = serverDict["command"] as? String else { continue }
+                let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !command.isEmpty, !Self.isWebURL(command) else {
+                    logMessage("ConnectorManager: Skipping MCP '\(serverName)' with non-local command")
+                    continue
+                }
 
                 guard !seenNames.contains(serverName) else {
                     logMessage("ConnectorManager: Skipping duplicate connector '\(serverName)' from \(configURL.path)")
@@ -253,6 +268,51 @@ public actor ConnectorManager {
             }
         } catch {
             logMessage("ConnectorManager: Error reading MCP config at \(configURL.path): \(error)")
+        }
+    }
+
+    private func discoverConnectors(inCodexConfigFile configURL: URL, discovered: inout [Connector], seenNames: inout Set<String>) {
+        guard let text = try? String(contentsOf: configURL, encoding: .utf8) else {
+            logMessage("ConnectorManager: Codex config not readable at \(configURL.path)")
+            return
+        }
+
+        let servers = Self.codexMCPServers(fromTOML: text)
+        let pluginPath = configURL.deletingLastPathComponent().standardizedFileURL.path
+
+        for (serverName, serviceConfig) in servers.sorted(by: { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }) {
+            if serviceConfig.url != nil && serviceConfig.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                logMessage("ConnectorManager: Skipping web-hosted Codex MCP '\(serverName)'")
+                continue
+            }
+
+            let command = serviceConfig.command.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !command.isEmpty, !Self.isWebURL(command) else {
+                logMessage("ConnectorManager: Skipping Codex MCP '\(serverName)' with non-local command")
+                continue
+            }
+
+            guard !seenNames.contains(serverName) else {
+                logMessage("ConnectorManager: Skipping duplicate connector '\(serverName)' from \(configURL.path)")
+                continue
+            }
+            seenNames.insert(serverName)
+
+            var env = serviceConfig.env ?? [:]
+            for (key, value) in env {
+                env[key] = expandConnectorPlaceholders(value, pluginPath: pluginPath, environment: env)
+            }
+
+            discovered.append(Connector(
+                name: serverName,
+                directoryPath: pluginPath,
+                configPath: configURL.standardizedFileURL.path,
+                command: expandConnectorPlaceholders(command, pluginPath: pluginPath, environment: env),
+                args: (serviceConfig.args ?? []).map { expandConnectorPlaceholders($0, pluginPath: pluginPath, environment: env) },
+                env: env,
+                importedFrom: configURL.standardizedFileURL.path,
+                sourceKind: .mirrored
+            ))
         }
     }
 
@@ -370,6 +430,10 @@ public actor ConnectorManager {
         url.lastPathComponent == "settings.json" && url.path.contains("/.claude/")
     }
 
+    private func isCodexConfigFile(_ url: URL) -> Bool {
+        url.lastPathComponent == "config.toml" && url.path.contains("/.codex/")
+    }
+
     private func expandConnectorPlaceholders(_ value: String, pluginPath: String, environment: [String: String]) -> String {
         var expanded = value
         for placeholder in Connector.pluginRootNames {
@@ -378,6 +442,258 @@ public actor ConnectorManager {
         expanded = expanded.replacingOccurrences(of: "${CLAUDE_PROJECT_DIR:-.}", with: ".")
         expanded = expanded.replacingOccurrences(of: "${CLAUDE_PROJECT_DIR}", with: pluginPath)
         return expandShellStyleVariables(in: expanded, environment: environment, preserveMissing: true)
+    }
+
+    public static func codexMCPServers(fromTOML text: String) -> [String: MCPServiceConfig] {
+        struct MutableServer {
+            var command: String = ""
+            var args: [String] = []
+            var env: [String: String] = [:]
+            var url: String?
+        }
+
+        var servers: [String: MutableServer] = [:]
+        var currentServer: String?
+        var currentIsEnvTable = false
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = stripTOMLComment(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            if line.hasPrefix("["), line.hasSuffix("]") {
+                let tableName = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                let parts = splitTOMLTableName(tableName)
+                if parts.count == 2, parts[0] == "mcp_servers" {
+                    currentServer = parts[1]
+                    currentIsEnvTable = false
+                    if servers[currentServer!] == nil {
+                        servers[currentServer!] = MutableServer()
+                    }
+                } else if parts.count == 3, parts[0] == "mcp_servers", parts[2] == "env" {
+                    currentServer = parts[1]
+                    currentIsEnvTable = true
+                    if servers[currentServer!] == nil {
+                        servers[currentServer!] = MutableServer()
+                    }
+                } else {
+                    currentServer = nil
+                    currentIsEnvTable = false
+                }
+                continue
+            }
+
+            guard let currentServer,
+                  let equalsIndex = line.firstIndex(of: "=") else {
+                continue
+            }
+
+            let key = parseTOMLKey(String(line[..<equalsIndex]))
+            let value = String(line[line.index(after: equalsIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if currentIsEnvTable {
+                if let parsed = parseTOMLString(value) {
+                    servers[currentServer, default: MutableServer()].env[key] = parsed
+                }
+                continue
+            }
+
+            switch key {
+            case "command":
+                if let parsed = parseTOMLString(value) {
+                    servers[currentServer, default: MutableServer()].command = parsed
+                }
+            case "args":
+                servers[currentServer, default: MutableServer()].args = parseTOMLStringArray(value)
+            case "env":
+                let parsedEnv = parseTOMLInlineStringTable(value)
+                servers[currentServer, default: MutableServer()].env.merge(parsedEnv, uniquingKeysWith: { _, new in new })
+            case "url":
+                servers[currentServer, default: MutableServer()].url = parseTOMLString(value)
+            default:
+                continue
+            }
+        }
+
+        return servers.reduce(into: [:]) { result, item in
+            result[item.key] = MCPServiceConfig(
+                command: item.value.command,
+                args: item.value.args,
+                env: item.value.env,
+                url: item.value.url
+            )
+        }
+    }
+
+    private static func isWebURL(_ value: String) -> Bool {
+        let lower = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lower.hasPrefix("http://") || lower.hasPrefix("https://")
+    }
+
+    private static func stripTOMLComment(_ line: String) -> String {
+        var result = ""
+        var inSingleQuote = false
+        var inDoubleQuote = false
+        var isEscaped = false
+
+        for character in line {
+            if inDoubleQuote && isEscaped {
+                result.append(character)
+                isEscaped = false
+                continue
+            }
+            if inDoubleQuote && character == "\\" {
+                result.append(character)
+                isEscaped = true
+                continue
+            }
+            if character == "\"", !inSingleQuote {
+                inDoubleQuote.toggle()
+                result.append(character)
+                continue
+            }
+            if character == "'", !inDoubleQuote {
+                inSingleQuote.toggle()
+                result.append(character)
+                continue
+            }
+            if character == "#", !inSingleQuote, !inDoubleQuote {
+                break
+            }
+            result.append(character)
+        }
+        return result
+    }
+
+    private static func splitTOMLTableName(_ value: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var inSingleQuote = false
+        var inDoubleQuote = false
+        var isEscaped = false
+
+        for character in value {
+            if inDoubleQuote && isEscaped {
+                current.append(character)
+                isEscaped = false
+                continue
+            }
+            if inDoubleQuote && character == "\\" {
+                current.append(character)
+                isEscaped = true
+                continue
+            }
+            if character == "\"", !inSingleQuote {
+                inDoubleQuote.toggle()
+                current.append(character)
+                continue
+            }
+            if character == "'", !inDoubleQuote {
+                inSingleQuote.toggle()
+                current.append(character)
+                continue
+            }
+            if character == ".", !inSingleQuote, !inDoubleQuote {
+                parts.append(parseTOMLKey(current))
+                current.removeAll()
+                continue
+            }
+            current.append(character)
+        }
+        parts.append(parseTOMLKey(current))
+        return parts
+    }
+
+    private static func parseTOMLKey(_ rawValue: String) -> String {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return parseTOMLString(value) ?? value
+    }
+
+    private static func parseTOMLString(_ rawValue: String) -> String? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.count >= 2 else { return nil }
+        let first = value.first
+        let last = value.last
+        guard (first == "\"" && last == "\"") || (first == "'" && last == "'") else {
+            return nil
+        }
+
+        var inner = String(value.dropFirst().dropLast())
+        if first == "\"" {
+            inner = inner
+                .replacingOccurrences(of: "\\\\", with: "\\")
+                .replacingOccurrences(of: "\\\"", with: "\"")
+                .replacingOccurrences(of: "\\n", with: "\n")
+                .replacingOccurrences(of: "\\t", with: "\t")
+        }
+        return inner
+    }
+
+    private static func parseTOMLStringArray(_ rawValue: String) -> [String] {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.hasPrefix("["), value.hasSuffix("]") else { return [] }
+        return splitTOMLList(String(value.dropFirst().dropLast())).compactMap(parseTOMLString)
+    }
+
+    private static func parseTOMLInlineStringTable(_ rawValue: String) -> [String: String] {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.hasPrefix("{"), value.hasSuffix("}") else { return [:] }
+
+        var result: [String: String] = [:]
+        for item in splitTOMLList(String(value.dropFirst().dropLast())) {
+            guard let equalsIndex = item.firstIndex(of: "=") else { continue }
+            let key = parseTOMLKey(String(item[..<equalsIndex]))
+            let raw = String(item[item.index(after: equalsIndex)...])
+            if let parsed = parseTOMLString(raw) {
+                result[key] = parsed
+            }
+        }
+        return result
+    }
+
+    private static func splitTOMLList(_ value: String) -> [String] {
+        var items: [String] = []
+        var current = ""
+        var inSingleQuote = false
+        var inDoubleQuote = false
+        var isEscaped = false
+
+        for character in value {
+            if inDoubleQuote && isEscaped {
+                current.append(character)
+                isEscaped = false
+                continue
+            }
+            if inDoubleQuote && character == "\\" {
+                current.append(character)
+                isEscaped = true
+                continue
+            }
+            if character == "\"", !inSingleQuote {
+                inDoubleQuote.toggle()
+                current.append(character)
+                continue
+            }
+            if character == "'", !inDoubleQuote {
+                inSingleQuote.toggle()
+                current.append(character)
+                continue
+            }
+            if character == ",", !inSingleQuote, !inDoubleQuote {
+                let item = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !item.isEmpty {
+                    items.append(item)
+                }
+                current.removeAll()
+                continue
+            }
+            current.append(character)
+        }
+
+        let item = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !item.isEmpty {
+            items.append(item)
+        }
+        return items
     }
 
     public func resolveEnvironment(for connector: Connector) async -> [String: String] {

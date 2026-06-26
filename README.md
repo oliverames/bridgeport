@@ -1,8 +1,10 @@
 # Bridgeport
 
-Bridgeport is a macOS 26 Tahoe menu bar utility and LaunchAgent daemon that turns this Mac into a personal MCP gateway. It discovers local stdio MCP servers, runs them on demand, and exposes them as authenticated local or Cloudflare-routed MCP endpoints.
+Bridgeport is a macOS 26 Tahoe menu bar utility and LaunchAgent daemon that turns this Mac into a personal MCP gateway. It discovers local stdio MCP servers from the tools already installed on the Mac, runs them on demand, and exposes them as authenticated local or Cloudflare-routed MCP endpoints.
 
 Bridgeport is intended for connectors that need this Mac, local app data, local credentials, or inexpensive personal hosting. URL-only MCP servers are skipped because they already have hosted equivalents.
+
+**Tagline:** Personal MCP gateway for Mac-local connectors.
 
 ## What It Does
 
@@ -33,7 +35,7 @@ graph LR
 
 Bridgeport:
 
-1. Discovers MCP servers from plugin folders, `.mcp.json`, Claude plugin manifests, Codex plugin manifests, Antigravity MCP configs, Hermes plugin manifests, and `.claude/settings.json`.
+1. Discovers MCP servers from plugin folders, `.mcp.json`, Claude plugin manifests, Codex plugin manifests, Antigravity MCP configs, Hermes plugin manifests, `.claude/settings.json`, and `.codex/config.toml`.
 2. Skips web-hosted MCP entries that have a `url` and no local `command`.
 3. Imports MCP definitions into Bridgeport-owned config, or mirrors external sources live.
 4. Spawns each connector process on demand and bridges JSON-RPC over stdin/stdout.
@@ -41,7 +43,7 @@ Bridgeport:
 6. Authenticates with `Authorization: Bearer <token>` by default and advertises Bearer auth on 401 responses for remote connector auto-detection.
 7. Generates cloud connector exports for Claude custom connectors, Anthropic Messages API MCP connectors, Mistral Work custom connectors, and Vibe Code CLI.
 8. Shows active sessions, enabled connector count, public exposure state, and connector source paths in the UI.
-9. Resolves secrets from process env, a mounted 1Password Environment `.env` file, Bridgeport config env, connector env, and `op://` references.
+9. Resolves secrets from process env, a mounted 1Password Environment `.env` file, Bridgeport config env, connector env, and `op://` references. Defaults are seeded from `~/.claude/.env` so Bridgeport stores references, not plaintext secrets.
 
 ## Quick Start
 
@@ -107,13 +109,18 @@ Bridgeport stores its config at `~/.config/bridgeport/config.json`.
   "connectorsPath": "/Users/oliverames/Developer/Projects/ames-connectors/plugins",
   "additionalConnectorPaths": [
     "/Users/oliverames/Developer/Projects/ynab-mcp-server",
-    "/Users/oliverames/.claude/settings.json"
+    "/Users/oliverames/.claude/settings.json",
+    "/Users/oliverames/.codex/config.toml"
   ],
   "connectorSettings": {
     "apple-notes": {
       "enabled": true,
       "exposePublicly": true,
       "publicPath": "apple-notes"
+    },
+    "node_repl": {
+      "enabled": true,
+      "exposePublicly": false
     }
   },
   "onePasswordEnvironment": {
@@ -149,7 +156,7 @@ Bridgeport writes enabled connectors to `~/.config/bridgeport/mcp_config.json`.
 }
 ```
 
-Query-string tokens are disabled by default. Keep them off unless a legacy client cannot send headers.
+Query-string tokens are disabled by default. Keep them off unless a legacy client cannot send headers. Public route paths are normalized to a safe single path segment before generated URLs are written.
 
 ## Cloud Connector Exports
 
@@ -196,7 +203,10 @@ Use **Mirror MCPs From...** when you want Bridgeport to keep reading an external
 - `/Users/oliverames/Developer/Projects/ames-connectors/plugins`
 - `/Users/oliverames/Developer/Projects/ynab-mcp-server`
 - `/Users/oliverames/.claude/settings.json`
+- `/Users/oliverames/.codex/config.toml`
 - `/Users/oliverames/.claude/plugins/cache/apple-notes-mcp/apple-notes/<version>`
+
+The Sources settings pane also has one-click actions for the default Claude Code and Codex config paths. Both flows keep URL-only web MCPs out of Bridgeport and default newly discovered local MCPs to private, non-public exposure.
 
 ## Environment And 1Password
 
@@ -274,6 +284,7 @@ See [CLOUDFLARE.md](CLOUDFLARE.md) for tunnel setup and security recommendations
 - Swift 6.2+
 - 1Password CLI for `op://` secret resolution
 - FlyingFox, via SwiftPM
+- Developer ID Application certificate for signed DMG releases
 
 ## Release Checks
 
@@ -282,9 +293,15 @@ swift build
 swift test
 python3 test_client.py
 script/build_and_run.sh --verify
+script/package_release.sh 1.0
+script/notarize_release.sh dist/release/Bridgeport-1.0.dmg
 ```
 
 `test_client.py` uses an isolated `BRIDGEPORT_CONFIG_HOME` and a free local port so it can run alongside an installed Bridgeport daemon.
+
+`script/package_release.sh` builds a release `.app`, signs it with the first available Developer ID Application identity or `BRIDGEPORT_SIGN_IDENTITY`, creates `dist/release/Bridgeport-<version>.dmg`, and signs the DMG.
+
+`script/notarize_release.sh` retrieves the App Store Connect `.p8` from 1Password, submits the DMG with `notarytool`, staples the ticket, and runs `spctl` verification.
 
 ## License
 

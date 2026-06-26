@@ -376,6 +376,18 @@ struct SettingsView: View {
                 } label: {
                     Label("Mirror MCPs From...", systemImage: "arrow.triangle.2.circlepath")
                 }
+
+                Button {
+                    Task { await appState.mirrorDefaultClaudeCodeMCPs() }
+                } label: {
+                    Label("Include Claude Code", systemImage: "sparkles.rectangle.stack")
+                }
+
+                Button {
+                    Task { await appState.mirrorDefaultCodexMCPs() }
+                } label: {
+                    Label("Include Codex", systemImage: "terminal")
+                }
             }
 
             Divider()

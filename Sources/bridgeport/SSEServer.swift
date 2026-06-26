@@ -343,7 +343,13 @@ public actor SSEServer {
         }
 
         do {
+            guard Self.isContentLengthAllowed(request) else {
+                return Self.textResponse(.payloadTooLarge, "Request body too large\n")
+            }
             let bodyData = try await request.bodyData
+            guard bodyData.count <= Self.maxRequestBodyBytes else {
+                return Self.textResponse(.payloadTooLarge, "Request body too large\n")
+            }
             guard let bodyString = String(data: bodyData, encoding: .utf8) else {
                 return Self.textResponse(.badRequest, "Invalid UTF-8 body\n")
             }
@@ -381,7 +387,13 @@ public actor SSEServer {
         }
 
         do {
+            guard Self.isContentLengthAllowed(request) else {
+                return Self.textResponse(.payloadTooLarge, "Request body too large\n")
+            }
             let bodyData = try await request.bodyData
+            guard bodyData.count <= Self.maxRequestBodyBytes else {
+                return Self.textResponse(.payloadTooLarge, "Request body too large\n")
+            }
             guard let bodyString = String(data: bodyData, encoding: .utf8) else {
                 return Self.textResponse(.badRequest, "Invalid UTF-8 body\n")
             }
@@ -426,7 +438,13 @@ public actor SSEServer {
         }
 
         do {
+            guard Self.isContentLengthAllowed(request) else {
+                return Self.textResponse(.payloadTooLarge, "Request body too large\n")
+            }
             let bodyData = try await request.bodyData
+            guard bodyData.count <= Self.maxRequestBodyBytes else {
+                return Self.textResponse(.payloadTooLarge, "Request body too large\n")
+            }
             let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
             await broadcastWebhook(connectorName: connector.name, payload: bodyString)
             return Self.textResponse(.accepted, "Webhook broadcasted\n")
@@ -537,13 +555,13 @@ public actor SSEServer {
         guard !token.isEmpty else { return false }
 
         if let authHeader = request.headers[.authorization],
-           authHeader == "Bearer \(token)" {
+           Self.constantTimeEquals(authHeader, "Bearer \(token)") {
             return true
         }
 
         if config.allowQueryTokenAuth == true,
            let queryToken = request.query.first(where: { $0.name == "token" })?.value,
-           queryToken == token {
+           Self.constantTimeEquals(queryToken, token) {
             return true
         }
 
@@ -597,6 +615,30 @@ public actor SSEServer {
         return HTTPResponse(statusCode: .unauthorized, headers: headers, body: Data("Unauthorized\n".utf8))
     }
 
+    public static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsBytes = Array(lhs.utf8)
+        let rhsBytes = Array(rhs.utf8)
+        let maxCount = max(lhsBytes.count, rhsBytes.count)
+        var difference = lhsBytes.count ^ rhsBytes.count
+
+        for index in 0..<maxCount {
+            let left = index < lhsBytes.count ? lhsBytes[index] : 0
+            let right = index < rhsBytes.count ? rhsBytes[index] : 0
+            difference |= Int(left ^ right)
+        }
+
+        return difference == 0
+    }
+
+    private static func isContentLengthAllowed(_ request: HTTPRequest) -> Bool {
+        guard let rawLength = request.headers[.contentLength],
+              let length = Int(rawLength.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return true
+        }
+        return length <= maxRequestBodyBytes
+    }
+
     private static let sessionHeader = HTTPHeader("Mcp-Session-Id")
     private static let originHeader = HTTPHeader("Origin")
+    private static let maxRequestBodyBytes = 1_048_576
 }

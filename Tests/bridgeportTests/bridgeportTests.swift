@@ -6,6 +6,7 @@ import Testing
     #expect(ConfigManager.normalizedRoutePath("/ynab/") == "ynab")
     #expect(ConfigManager.normalizedRoutePath(" apple-notes ") == "apple-notes")
     #expect(ConfigManager.normalizedRoutePath("/") == "mcp")
+    #expect(ConfigManager.normalizedRoutePath("../bad path?token=x") == "bad-path-token-x")
 }
 
 @Test func dotenvParserHandlesMountedOnePasswordFileShape() {
@@ -21,6 +22,57 @@ import Testing
     #expect(values["GOOGLE_CLIENT_ID"] == "plain-id")
     #expect(values["EMPTY"] == "")
     #expect(values["SINGLE_QUOTED"] == "value")
+}
+
+@Test func defaultEnvReferencesPreferClaudeEnvOpReferences() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let claudeEnv = root.appendingPathComponent(".env")
+    try """
+    GITHUB_TOKEN=op://Development/GitHub/credential
+    PLAIN_TOKEN=plaintext
+    TOOL_PATH=/usr/local/bin/tool
+    """.write(to: claudeEnv, atomically: true, encoding: .utf8)
+
+    let settings = root.appendingPathComponent("settings.json")
+    try """
+    {
+      "env": {
+        "GITHUB_TOKEN": "plaintext-token",
+        "TOOL_PATH": "/usr/local/bin/tool"
+      }
+    }
+    """.write(to: settings, atomically: true, encoding: .utf8)
+
+    let values = ConfigManager.defaultEnvReferences(claudeEnvURL: claudeEnv, claudeSettingsURL: settings)
+
+    #expect(values["GITHUB_TOKEN"] == "op://Development/GitHub/credential")
+    #expect(values["PLAIN_TOKEN"] == nil)
+    #expect(values["TOOL_PATH"] == nil)
+}
+
+@Test func defaultEnvReferencesOnlyFallsBackToSafeClaudeSettingsValues() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let missingEnv = root.appendingPathComponent("missing.env")
+    let settings = root.appendingPathComponent("settings.json")
+    try """
+    {
+      "env": {
+        "GITHUB_TOKEN": "plaintext-token",
+        "GITHUB_TOKEN_REF": "op://Development/GitHub/credential",
+        "TOOL_PATH": "/usr/local/bin/tool"
+      }
+    }
+    """.write(to: settings, atomically: true, encoding: .utf8)
+
+    let values = ConfigManager.defaultEnvReferences(claudeEnvURL: missingEnv, claudeSettingsURL: settings)
+
+    #expect(values["GITHUB_TOKEN"] == nil)
+    #expect(values["GITHUB_TOKEN_REF"] == "op://Development/GitHub/credential")
+    #expect(values["TOOL_PATH"] == "/usr/local/bin/tool")
 }
 
 @Test func mountedOnePasswordEnvParticipatesInConnectorResolution() async throws {
@@ -97,6 +149,49 @@ import Testing
     #expect(connectors.first?.args.first == "./build/index.js")
     #expect(connectors.first?.args.last == pluginDir.appendingPathComponent("fixtures").path)
     #expect(connectors.first?.requiredEnvVarNames == ["SAMPLE_TOKEN"])
+}
+
+@Test func discoversLocalCodexMCPServersAndSkipsWebOnlyServers() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let codexDir = root.appendingPathComponent(".codex")
+    try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+    let codexConfig = codexDir.appendingPathComponent("config.toml")
+    try """
+    [mcp_servers.node_repl]
+    command = "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"
+    args = ["--stdio", "${CODEX_PLUGIN_ROOT}/shim.js"]
+    env = { "NODE_PATH" = "/tmp/node", "TOKEN_REF" = "${TOKEN_REF}" }
+
+    [mcp_servers.web_docs]
+    url = "https://example.com/mcp"
+    """.write(to: codexConfig, atomically: true, encoding: .utf8)
+
+    let manager = ConnectorManager(connectorPaths: [codexConfig.path])
+    let connectors = await manager.discoverConnectors()
+
+    #expect(connectors.count == 1)
+    #expect(connectors.first?.name == "node_repl")
+    #expect(connectors.first?.command == "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl")
+    #expect(connectors.first?.args.last == codexDir.appendingPathComponent("shim.js").path)
+    #expect(connectors.first?.env["NODE_PATH"] == "/tmp/node")
+    #expect(connectors.first?.requiredEnvVarNames == ["TOKEN_REF"])
+}
+
+@Test func parsesCodexQuotedTablesAndEnvSubtables() {
+    let servers = ConnectorManager.codexMCPServers(fromTOML: """
+    [mcp_servers."quoted.name"]
+    command = 'node'
+    args = ['server.js', '--name=quoted.name']
+
+    [mcp_servers."quoted.name".env]
+    API_TOKEN = "op://Development/Token/credential"
+    """)
+
+    #expect(servers["quoted.name"]?.command == "node")
+    #expect(servers["quoted.name"]?.args == ["server.js", "--name=quoted.name"])
+    #expect(servers["quoted.name"]?.env?["API_TOKEN"] == "op://Development/Token/credential")
 }
 
 @Test func clientConfigUsesHeaderAuthAndMcpEndpoint() async throws {
@@ -203,6 +298,12 @@ import Testing
     #expect(headerOnlyExport.claudeCustomConnectors.first?.readyForClaudeApp == false)
     #expect(headerOnlyExport.claudeCustomConnectors.first?.remoteMCPServerURL == "https://mcp.example.com/mcp/mock")
     #expect(headerOnlyExport.anthropicMessagesAPIMCPServers.first?.authorizationToken == "test-token")
+}
+
+@Test func constantTimeTokenComparisonMatchesExactStringsOnly() {
+    #expect(SSEServer.constantTimeEquals("Bearer test-token", "Bearer test-token"))
+    #expect(!SSEServer.constantTimeEquals("Bearer test-token", "Bearer test-token-extra"))
+    #expect(!SSEServer.constantTimeEquals("Bearer test-token", "bearer test-token"))
 }
 
 private func temporaryDirectory() throws -> URL {

@@ -172,6 +172,14 @@ public final class AppState {
         await reload()
     }
 
+    public func mirrorDefaultClaudeCodeMCPs() async {
+        await mirrorDefaultSource(path: ConfigManager.defaultClaudeSettingsPath(), missingMessage: "Claude Code settings not found")
+    }
+
+    public func mirrorDefaultCodexMCPs() async {
+        await mirrorDefaultSource(path: ConfigManager.defaultCodexConfigPath(), missingMessage: "Codex config not found")
+    }
+
     public func removeMirroredPath(_ path: String) async {
         additionalConnectorPathsText = additionalConnectorPaths
             .filter { $0 != path }
@@ -437,5 +445,14 @@ public final class AppState {
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private func mirrorDefaultSource(path: String, missingMessage: String) async {
+        let standardized = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path
+        guard FileManager.default.fileExists(atPath: standardized) else {
+            lastStatusMessage = missingMessage
+            return
+        }
+        await mirrorMCPs(from: standardized)
     }
 }
