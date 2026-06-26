@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "bridgeport",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v26)
     ],
     dependencies: [
         .package(url: "https://github.com/swhitty/FlyingFox.git", from: "0.26.0")

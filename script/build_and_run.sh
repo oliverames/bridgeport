@@ -5,7 +5,7 @@ MODE="${1:-run}"
 APP_NAME="Bridgeport"
 BINARY_NAME="bridgeport"
 BUNDLE_ID="com.oliverames.bridgeport"
-MIN_SYSTEM_VERSION="15.0"
+MIN_SYSTEM_VERSION="26.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
@@ -15,8 +15,13 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$BINARY_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
-# Kill any running instances of the app (GUI or daemon server)
-pkill -f "$BINARY_NAME" >/dev/null 2>&1 || true
+# Stop only the app bundle assembled by this script. Do not stop an installed
+# LaunchAgent daemon that may be serving real connector sessions.
+if [ -d "$APP_BUNDLE" ]; then
+  while IFS= read -r pid; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done < <(pgrep -f "$APP_BINARY" || true)
+fi
 
 # Build using SwiftPM
 swift build

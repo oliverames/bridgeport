@@ -1,169 +1,238 @@
-import subprocess
-import time
-import urllib.request
-import urllib.parse
 import json
-import sys
 import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
 
-PORT = 8085
 TOKEN = "test_token_123"
-CONNECTORS_PATH = "/Users/oliverames/.gemini/antigravity/scratch/bridgeport"
+ROOT = os.path.abspath(os.path.dirname(__file__))
+CONNECTORS_PATH = os.path.join(ROOT, "mock-connector")
+
 
 def log(msg):
     print(f"[TEST] {msg}")
 
+
+def read_sse_json(response, expected_event="message"):
+    event_name = None
+    for _ in range(30):
+        line = response.readline().decode("utf-8").strip()
+        if not line:
+            continue
+        log(f"Received line: {line}")
+        if line.startswith("event:"):
+            event_name = line.split(":", 1)[1].strip()
+        elif line.startswith("data:") and event_name == expected_event:
+            data_val = line.split(":", 1)[1].strip()
+            return json.loads(data_val)
+    raise AssertionError(f"Did not receive SSE {expected_event!r} event")
+
+
+def read_endpoint(response):
+    event_name = None
+    for _ in range(20):
+        line = response.readline().decode("utf-8").strip()
+        if not line:
+            continue
+        log(f"Received line: {line}")
+        if line.startswith("event:"):
+            event_name = line.split(":", 1)[1].strip()
+        elif line.startswith("data:") and event_name == "endpoint":
+            return line.split(":", 1)[1].strip()
+    raise AssertionError("Did not receive endpoint handshake event")
+
+
+def request(url, data=None, method=None):
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "application/json, text/event-stream"
+    else:
+        headers["Accept"] = "text/event-stream"
+    return urllib.request.Request(url, data=data, headers=headers, method=method)
+
+
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def write_isolated_config(config_home, port):
+    config = {
+        "token": TOKEN,
+        "port": port,
+        "publicBaseURL": "",
+        "bindHost": "127.0.0.1",
+        "allowedOrigins": [
+            f"http://localhost:{port}",
+            f"http://127.0.0.1:{port}",
+            f"http://[::1]:{port}",
+        ],
+        "allowQueryTokenAuth": True,
+        "connectorsPath": CONNECTORS_PATH,
+        "additionalConnectorPaths": [],
+        "importedConnectors": {},
+        "connectorSettings": {},
+        "onePasswordEnvironment": {
+            "enabled": False,
+            "accountId": "",
+            "environmentId": "",
+            "environmentName": "",
+            "localEnvFilePath": "",
+        },
+        "env": {},
+        "disabledConnectors": [],
+    }
+    with open(os.path.join(config_home, "config.json"), "w", encoding="utf-8") as fh:
+        json.dump(config, fh)
+
+
 def run_tests():
     server_process = None
-    try:
-        # Build bridgeport executable first
-        log("Ensuring build is fresh...")
-        subprocess.run(["swift", "build"], check=True)
-        
-        # Locate executable
-        exec_path = ".build/debug/bridgeport"
-        if not os.path.exists(exec_path):
-            exec_path = ".build/out/Products/Debug/bridgeport"
+    stdout_file = None
+    stderr_file = None
+    with tempfile.TemporaryDirectory(prefix="bridgeport-smoke-") as config_home:
+        port = find_free_port()
+        try:
+            log("Ensuring build is fresh...")
+            subprocess.run(["swift", "build"], cwd=ROOT, check=True)
+            write_isolated_config(config_home, port)
+
+            exec_path = os.path.join(ROOT, ".build/debug/bridgeport")
+            if not os.path.exists(exec_path):
+                exec_path = os.path.join(ROOT, ".build/out/Products/Debug/bridgeport")
             if not os.path.exists(exec_path):
                 raise FileNotFoundError("Could not find bridgeport binary")
-        
-        # Start server
-        log(f"Starting Bridgeport server on port {PORT}...")
-        stdout_file = open("server_stdout.log", "w")
-        stderr_file = open("server_stderr.log", "w")
-        server_process = subprocess.Popen([
-            exec_path,
-            "--server",
-            "--port", str(PORT),
-            "--token", TOKEN,
-            "--connectors-path", CONNECTORS_PATH
-        ], stdout=stdout_file, stderr=stderr_file)
-        
-        # Wait for server to start
-        time.sleep(1.5)
-        
-        # 1. Test Unauthorized SSE Connection
-        log("Test 1: Connecting without token...")
-        try:
-            urllib.request.urlopen(f"http://localhost:{PORT}/mock-echo/sse")
-            log("FAIL: Connected without authorization")
-            sys.exit(1)
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                log("PASS: Received 401 Unauthorized as expected")
-            else:
-                log(f"FAIL: Expected 401 but got {e.code}")
-                sys.exit(1)
 
-        # 2. Test Authorized SSE Connection & Handshake
-        log("Test 2: Connecting with valid token in query param...")
-        sse_url = f"http://localhost:{PORT}/mock-echo/sse?token={TOKEN}"
-        
-        req = urllib.request.Request(sse_url)
-        # We will open the stream and read the first event (endpoint handshake)
-        response = urllib.request.urlopen(req)
-        
-        log("Connected successfully to SSE stream. Waiting for endpoint handshake...")
-        
-        # Read lines until we get the endpoint data
-        endpoint_path = None
-        event_name = None
-        
-        for _ in range(10):
-            line = response.readline().decode('utf-8').strip()
-            if not line:
-                continue
-            log(f"Received line: {line}")
-            if line.startswith("event:"):
-                event_name = line.split(":", 1)[1].strip()
-            elif line.startswith("data:"):
-                data_val = line.split(":", 1)[1].strip()
-                if event_name == "endpoint":
-                    endpoint_path = data_val
-                    break
-        
-        if not endpoint_path:
-            log("FAIL: Did not receive endpoint handshake event")
-            sys.exit(1)
-            
-        log(f"PASS: Received endpoint handshake event: {endpoint_path}")
-        
-        # 3. Test sending a message (POST to the endpoint path)
-        log("Test 3: Sending client message (POST)...")
-        # Resolve full URL
-        post_url = f"http://localhost:{PORT}{endpoint_path}&token={TOKEN}"
-        log(f"POST URL: {post_url}")
-        
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 42,
-            "method": "tools/list",
-            "params": {}
-        }
-        
-        post_data = json.dumps(payload).encode('utf-8')
-        post_req = urllib.request.Request(
-            post_url,
-            data=post_data,
-            headers={"Content-Type": "application/json"}
-        )
-        
-        post_res = urllib.request.urlopen(post_req)
-        if post_res.code == 200:
-            log("PASS: POST request completed successfully with 200 OK")
-        else:
-            log(f"FAIL: POST request returned {post_res.code}")
-            sys.exit(1)
-            
-        # 4. Read back the response from the SSE stream
-        log("Test 4: Reading response from SSE stream...")
-        response_event = None
-        event_name = None
-        
-        for _ in range(10):
-            line = response.readline().decode('utf-8').strip()
-            if not line:
-                continue
-            log(f"Received line: {line}")
-            if line.startswith("event:"):
-                event_name = line.split(":", 1)[1].strip()
-            elif line.startswith("data:"):
-                data_val = line.split(":", 1)[1].strip()
-                if event_name == "message":
-                    response_event = json.loads(data_val)
-                    break
-                    
-        if not response_event:
-            log("FAIL: Did not receive response message on SSE stream")
-            sys.exit(1)
-            
-        log(f"Received JSON-RPC message: {response_event}")
-        
-        # Verify JSON-RPC matches the expected structure and echoes our payload
-        if response_event.get("id") == 42:
-            echoed_text = response_event.get("result", {}).get("content", [{}])[0].get("text", "")
-            if "Echo:" in echoed_text and '"id": 42' in echoed_text:
-                log("PASS: Response JSON matches request id and contains echoed payload!")
-            else:
-                log("FAIL: Response contents do not match expected echo format")
-                sys.exit(1)
-        else:
-            log(f"FAIL: Expected response ID 42 but got {response_event.get('id')}")
-            sys.exit(1)
-            
-        log("ALL TESTS COMPLETED SUCCESSFULLY!")
-        
-    finally:
-        if server_process:
-            log("Stopping Bridgeport server...")
-            server_process.terminate()
-            server_process.wait()
-            log("Server stopped.")
-        try:
-            stdout_file.close()
-            stderr_file.close()
-        except:
-            pass
+            stdout_file = open(os.path.join(config_home, "server_stdout.log"), "w")
+            stderr_file = open(os.path.join(config_home, "server_stderr.log"), "w")
+            env = os.environ.copy()
+            env["BRIDGEPORT_CONFIG_HOME"] = config_home
+
+            log(f"Starting Bridgeport server on port {port} with isolated config {config_home}...")
+            server_process = subprocess.Popen(
+                [
+                    exec_path,
+                    "--server",
+                    "--port", str(port),
+                    "--token", TOKEN,
+                    "--connectors-path", CONNECTORS_PATH,
+                    "--bind-host", "127.0.0.1",
+                ],
+                cwd=ROOT,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                env=env,
+            )
+
+            time.sleep(1.5)
+
+            log("Test 1: Connecting without token...")
+            try:
+                urllib.request.urlopen(f"http://localhost:{port}/mock-echo/sse", timeout=5)
+                raise AssertionError("Connected without authorization")
+            except urllib.error.HTTPError as e:
+                if e.code != 401:
+                    raise
+                auth_header = e.headers.get("WWW-Authenticate", "")
+                if "Bearer" not in auth_header:
+                    raise AssertionError(f"Expected Bearer auth challenge, got {auth_header!r}")
+                log("PASS: Received 401 Unauthorized as expected")
+
+            log("Test 2: Legacy SSE handshake with Authorization header...")
+            response = urllib.request.urlopen(request(f"http://localhost:{port}/mock-echo/sse"), timeout=10)
+            endpoint_path = read_endpoint(response)
+            log(f"PASS: Received endpoint handshake event: {endpoint_path}")
+
+            log("Test 3: Legacy POST message...")
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 42,
+                "method": "tools/list",
+                "params": {},
+            }
+            post_url = f"http://localhost:{port}{endpoint_path}"
+            post_res = urllib.request.urlopen(request(post_url, json.dumps(payload).encode("utf-8")), timeout=10)
+            if post_res.code not in (200, 202):
+                raise AssertionError(f"Expected 200/202 from legacy POST, got {post_res.code}")
+            log("PASS: Legacy POST accepted")
+
+            log("Test 4: Legacy SSE response...")
+            response_event = read_sse_json(response)
+            if response_event.get("id") != 42:
+                raise AssertionError(f"Expected response ID 42, got {response_event.get('id')}")
+            log("PASS: Legacy SSE response matched request")
+
+            log("Test 5: Streamable HTTP /mcp POST...")
+            payload["id"] = 7
+            mcp_req = request(f"http://localhost:{port}/mcp/mock-echo", json.dumps(payload).encode("utf-8"))
+            mcp_response = urllib.request.urlopen(mcp_req, timeout=10)
+            session_id = mcp_response.headers.get("Mcp-Session-Id")
+            if not session_id:
+                raise AssertionError("Streamable HTTP response did not include Mcp-Session-Id")
+            mcp_event = read_sse_json(mcp_response)
+            if mcp_event.get("id") != 7:
+                raise AssertionError(f"Expected response ID 7, got {mcp_event.get('id')}")
+            log("PASS: Streamable HTTP response matched request")
+
+            log("Test 6: Streamable HTTP query-token fallback...")
+            payload["id"] = 8
+            query_headers = {
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            }
+            query_req = urllib.request.Request(
+                f"http://localhost:{port}/mcp/mock-echo?token={TOKEN}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers=query_headers,
+            )
+            query_response = urllib.request.urlopen(query_req, timeout=10)
+            query_event = read_sse_json(query_response)
+            if query_event.get("id") != 8:
+                raise AssertionError(f"Expected response ID 8, got {query_event.get('id')}")
+            log("PASS: Query-token fallback response matched request")
+
+            log("Test 7: Runtime status endpoint...")
+            status_response = urllib.request.urlopen(
+                urllib.request.Request(
+                    f"http://localhost:{port}/status",
+                    headers={"Authorization": f"Bearer {TOKEN}"},
+                ),
+                timeout=10,
+            )
+            status = json.loads(status_response.read().decode("utf-8"))
+            if "connectors" not in status or not status["connectors"]:
+                raise AssertionError("Status endpoint did not return connectors")
+            log("PASS: Status endpoint returned connector runtime data")
+
+            config_path = os.path.join(config_home, "config.json")
+            client_config_path = os.path.join(config_home, "mcp_config.json")
+            cloud_config_path = os.path.join(config_home, "cloud_connectors.json")
+            if not os.path.exists(config_path) or not os.path.exists(client_config_path) or not os.path.exists(cloud_config_path):
+                raise AssertionError("Isolated config files were not written")
+            log("PASS: Isolated config home used for generated files")
+
+            log("ALL TESTS COMPLETED SUCCESSFULLY!")
+        finally:
+            if server_process:
+                log("Stopping Bridgeport server...")
+                server_process.terminate()
+                try:
+                    server_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    server_process.kill()
+                    server_process.wait()
+                log("Server stopped.")
+            if stdout_file:
+                stdout_file.close()
+            if stderr_file:
+                stderr_file.close()
+
 
 if __name__ == "__main__":
     run_tests()
