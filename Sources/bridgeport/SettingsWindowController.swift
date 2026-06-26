@@ -7,13 +7,17 @@ final class SettingsWindowCoordinator: NSObject {
 
     private var appState: AppState?
     private var windowController: SettingsWindowController?
+    private var didHandleOpenSettingsLaunchRequest = false
 
     func configure(appState: AppState) {
         self.appState = appState
+        guard ProcessInfo.processInfo.environment["BRIDGEPORT_OPEN_SETTINGS"] == "1" else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.openSettingsIfRequested()
+        }
     }
 
     func installAppMenuItem() {
-        guard NSApp.activationPolicy() == .regular else { return }
         guard let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
 
         for item in appMenu.items where item.title == "Settings..." || item.title == "Settings…" {
@@ -46,6 +50,16 @@ final class SettingsWindowCoordinator: NSObject {
         }
         windowController?.show()
         installAppMenuItem()
+    }
+
+    func openSettingsIfRequested() {
+        guard !didHandleOpenSettingsLaunchRequest else { return }
+        guard ProcessInfo.processInfo.environment["BRIDGEPORT_OPEN_SETTINGS"] == "1" else { return }
+        guard appState != nil else { return }
+        didHandleOpenSettingsLaunchRequest = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.openSettingsWindow()
+        }
     }
 
     @objc private func openSettingsFromMenu(_ sender: Any?) {
@@ -90,9 +104,10 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     func show() {
+        NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window?.orderFrontRegardless()
     }
 
     func windowWillClose(_ notification: Notification) {

@@ -12,6 +12,22 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    static func initialSelection(environment: [String: String] = ProcessInfo.processInfo.environment) -> SettingsPane {
+        guard let requested = environment["BRIDGEPORT_SETTINGS_PANE"] else {
+            return .dashboard
+        }
+        let requestedIdentifier = paneIdentifier(requested)
+        return allCases.first { paneIdentifier($0.rawValue) == requestedIdentifier } ?? .dashboard
+    }
+
+    private static func paneIdentifier(_ value: String) -> String {
+        value
+            .unicodeScalars
+            .filter { CharacterSet.alphanumerics.contains($0) }
+            .map { String($0).lowercased() }
+            .joined()
+    }
+
     var icon: String {
         switch self {
         case .dashboard: "gauge.with.dots.needle.bottom.50percent"
@@ -27,7 +43,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Bindable var appState: AppState
-    @State private var selection: SettingsPane = .dashboard
+    @State private var selection: SettingsPane = SettingsPane.initialSelection()
     @State private var connectorSearchText = ""
 
     var body: some View {
@@ -40,7 +56,7 @@ struct SettingsView: View {
             .listStyle(.sidebar)
         } detail: {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 16) {
                     switch selection {
                     case .dashboard:
                         dashboardPane
@@ -58,7 +74,9 @@ struct SettingsView: View {
                         sourcesPane
                     }
                 }
-                .padding(28)
+                .padding(.horizontal, 32)
+                .padding(.top, 24)
+                .padding(.bottom, 32)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(.background)
@@ -81,7 +99,7 @@ struct SettingsView: View {
 
     private var dashboardPane: some View {
         VStack(alignment: .leading, spacing: 20) {
-            PaneHeader(title: "Bridgeport", subtitle: "Personal MCP gateway for local Mac connectors and self-hosted tools.")
+            ProductHeader(title: "Bridgeport", subtitle: "Personal MCP gateway for local Mac connectors and self-hosted tools.")
 
             SettingsGroup(title: "Status") {
                 LabeledContent("Daemon") {
@@ -108,15 +126,15 @@ struct SettingsView: View {
                 }
             }
 
-            HStack(spacing: 10) {
+            ActionGrid(minimumItemWidth: 170) {
                 Button {
                     Task {
-                        appState.checkDaemonStatus()
-                        await appState.refreshDaemonRuntimeStatus()
+                        await appState.reload()
                     }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label(appState.isReloading ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
                 }
+                .disabled(appState.isReloading)
 
                 Button {
                     Task {
@@ -274,7 +292,7 @@ struct SettingsView: View {
                         .onSubmit { Task { await appState.save() } }
                 }
 
-                HStack {
+                ActionGrid(minimumItemWidth: 180) {
                     Button {
                         Task { await appState.save() }
                     } label: {
@@ -299,17 +317,17 @@ struct SettingsView: View {
 
     private var cloudConnectorsPane: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PaneHeader(title: "Cloud Connectors", subtitle: "Copy public Bridgeport endpoints into Claude, Anthropic API, Mistral Work, and Vibe Code.")
+            PaneHeader(title: "Cloud Connectors", subtitle: "Copy public Bridgeport endpoints into ChatGPT custom apps, Claude custom connectors, Anthropic API, Mistral Work, and Vibe Code.")
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Public connector requirements")
                     .font(.headline)
-                Text("Claude and Mistral cloud connectors reach Bridgeport from their cloud infrastructure, so each connector needs a public base URL, Cloudflare routing, and the connector's Public toggle enabled.")
+                Text("Cloud connector portals reach Bridgeport from their cloud infrastructure, so each connector needs a public base URL, Cloudflare routing, and the connector's Public toggle enabled.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack {
+            ActionGrid(minimumItemWidth: 190) {
                 Button {
                     copy(appState.cloudConnectorExportJSON())
                 } label: {
@@ -329,7 +347,7 @@ struct SettingsView: View {
                         appState.allowQueryTokenAuth = true
                         Task { await appState.save() }
                     } label: {
-                        Label("Enable Claude URL Fallback", systemImage: "link.badge.plus")
+                        Label("Enable Query-Token Fallback", systemImage: "link.badge.plus")
                     }
                 }
             }
@@ -392,7 +410,7 @@ struct SettingsView: View {
                     }
                 }
 
-                HStack {
+                ActionGrid(minimumItemWidth: 180) {
                     Button {
                         Task { await appState.save() }
                     } label: {
@@ -414,7 +432,7 @@ struct SettingsView: View {
             PaneHeader(title: "Sources", subtitle: "Import copies MCP definitions into Bridgeport. Mirror keeps reading the external source live.")
 
             SettingsGroup(title: "Quick Add") {
-                HStack {
+                ActionGrid(minimumItemWidth: 170) {
                     Button {
                         Task { await appState.mirrorDefaultClaudeCodeMCPs() }
                     } label: {
@@ -442,7 +460,7 @@ struct SettingsView: View {
             }
 
             SettingsGroup(title: "Mirrored Sources") {
-                HStack {
+                ActionGrid(minimumItemWidth: 180) {
                     Button {
                         mirrorMCPs()
                     } label: {
@@ -470,10 +488,16 @@ struct SettingsView: View {
                     }
                 }
 
-                TextEditor(text: $appState.additionalConnectorPathsText)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 110)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+                DisclosureGroup {
+                    TextEditor(text: $appState.additionalConnectorPathsText)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 110)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+                } label: {
+                    Text("Edit Source Paths")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             SettingsGroup(title: "Imported Connectors") {
@@ -576,13 +600,38 @@ private struct PaneHeader: View {
     let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.title.weight(.semibold))
-            Text(subtitle)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        Text(subtitle)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("\(title): \(subtitle)")
+    }
+}
+
+private struct ProductHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -597,6 +646,29 @@ private struct SettingsField<Content: View>: View {
                 .foregroundStyle(.secondary)
             content
         }
+    }
+}
+
+private struct ActionGrid<Content: View>: View {
+    let minimumItemWidth: CGFloat
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                content
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: minimumItemWidth), spacing: 10, alignment: .leading)],
+                alignment: .leading,
+                spacing: 10
+            ) {
+                content
+            }
+        }
+        .controlSize(.regular)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -636,8 +708,10 @@ private struct SettingsGroup<Content: View>: View {
                 content
             }
             .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -687,77 +761,82 @@ private struct ConnectorRow: View {
                 .toggleStyle(.switch)
             }
 
-            HStack(spacing: 16) {
-                Toggle("Public", isOn: Binding(
-                    get: { appState.connectorSettings(for: connector.name).exposePublicly },
-                    set: { _ in Task { await appState.togglePublicExposure(connector.name) } }
-                ))
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Toggle("Public", isOn: Binding(
+                        get: { appState.connectorSettings(for: connector.name).exposePublicly },
+                        set: { _ in Task { await appState.togglePublicExposure(connector.name) } }
+                    ))
 
-                Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                    .foregroundStyle(.secondary)
+                    Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                        .foregroundStyle(.secondary)
 
-                TextField(connector.name, text: Binding(
-                    get: { appState.connectorSettings(for: connector.name).publicPath ?? connector.name },
-                    set: { newValue in
-                        var settings = appState.connectorSettings(for: connector.name)
-                        settings.publicPath = newValue
-                        appState.connectorSettings[connector.name] = settings
+                    TextField(connector.name, text: Binding(
+                        get: { appState.connectorSettings(for: connector.name).publicPath ?? connector.name },
+                        set: { newValue in
+                            var settings = appState.connectorSettings(for: connector.name)
+                            settings.publicPath = newValue
+                            appState.connectorSettings[connector.name] = settings
+                        }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .disabled(!isPublic)
+                    .onSubmit {
+                        Task {
+                            await appState.setPublicPath(appState.connectorSettings(for: connector.name).publicPath ?? connector.name, for: connector.name)
+                        }
                     }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 180)
-                .disabled(!isPublic)
-                .onSubmit {
-                    Task {
-                        await appState.setPublicPath(appState.connectorSettings(for: connector.name).publicPath ?? connector.name, for: connector.name)
+                }
+
+                ActionGrid(minimumItemWidth: 138) {
+                    Button {
+                        copy(appState.endpointURL(for: connector, publicEndpoint: false))
+                    } label: {
+                        Label("Copy Local", systemImage: "link")
                     }
-                }
 
-                Spacer()
-
-                Button {
-                    copy(appState.endpointURL(for: connector, publicEndpoint: false))
-                } label: {
-                    Label("Copy Local", systemImage: "link")
+                    Button {
+                        copy(appState.endpointURL(for: connector, publicEndpoint: true))
+                    } label: {
+                        Label("Copy Public", systemImage: "globe")
+                    }
+                    .disabled(!isPublic || appState.publicBaseURL.isEmpty)
                 }
-
-                Button {
-                    copy(appState.endpointURL(for: connector, publicEndpoint: true))
-                } label: {
-                    Label("Copy Public", systemImage: "globe")
-                }
-                .disabled(!isPublic || appState.publicBaseURL.isEmpty)
             }
 
             let requiredVars = connector.requiredEnvVarNames
             if !requiredVars.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Required Environment")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    ForEach(requiredVars, id: \.self) { varName in
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(requiredVars, id: \.self) { varName in
+                            HStack {
+                                Text(varName)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .frame(width: 220, alignment: .trailing)
+                                if isSensitiveKey(varName) {
+                                    SecureField("op:// reference or value", text: envBinding(varName))
+                                        .textFieldStyle(.roundedBorder)
+                                } else {
+                                    TextField("op:// reference or value", text: envBinding(varName))
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                            }
+                        }
                         HStack {
-                            Text(varName)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(width: 220, alignment: .trailing)
-                            if isSensitiveKey(varName) {
-                                SecureField("op:// reference or value", text: envBinding(varName))
-                                    .textFieldStyle(.roundedBorder)
-                            } else {
-                                TextField("op:// reference or value", text: envBinding(varName))
-                                    .textFieldStyle(.roundedBorder)
+                            Spacer()
+                                .frame(width: 220)
+                            Button {
+                                Task { await appState.save() }
+                            } label: {
+                                Label("Save Environment", systemImage: "checkmark.circle")
                             }
                         }
                     }
-                    HStack {
-                        Spacer()
-                            .frame(width: 220)
-                        Button {
-                            Task { await appState.save() }
-                        } label: {
-                            Label("Save Environment", systemImage: "checkmark.circle")
-                        }
-                    }
+                } label: {
+                    Text("Required Environment (\(requiredVars.count))")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -865,7 +944,16 @@ private struct CloudConnectorRow: View {
                 Spacer()
             }
 
-            HStack(spacing: 10) {
+            ActionGrid(minimumItemWidth: 190) {
+                Button {
+                    if let url = appState.chatGPTCustomAppURL(for: connector) {
+                        copy(url)
+                    }
+                } label: {
+                    Label("Copy ChatGPT URL", systemImage: "bubble.left.and.text.bubble.right")
+                }
+                .disabled(appState.chatGPTCustomAppURL(for: connector) == nil)
+
                 Button {
                     if let url = appState.claudeCustomConnectorURL(for: connector) {
                         copy(url)
@@ -884,7 +972,7 @@ private struct CloudConnectorRow: View {
                 Button {
                     copy(appState.mistralCustomConnectorJSON(for: connector))
                 } label: {
-                    Label("Copy Mistral Details", systemImage: "square.grid.2x2")
+                    Label("Copy Mistral JSON", systemImage: "square.grid.2x2")
                 }
 
                 Button {
@@ -894,7 +982,7 @@ private struct CloudConnectorRow: View {
                 }
             }
 
-            Text(appState.allowQueryTokenAuth ? "Claude app URL includes the Bridgeport token because Claude's app dialog does not provide a static header field. Mistral and Vibe should use Bearer auth instead." : "Claude app URL export is disabled until query-token fallback or OAuth support is enabled. Anthropic API, Mistral, and Vibe exports use Bearer auth.")
+            Text(appState.allowQueryTokenAuth ? "Claude uses Bridgeport OAuth. ChatGPT can use OAuth or the private query-token fallback for compatibility testing. Anthropic API, Mistral, and Vibe should use Bearer auth." : "Claude uses Bridgeport OAuth. ChatGPT OAuth is the production path. Anthropic API, Mistral, and Vibe exports use Bearer auth.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

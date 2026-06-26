@@ -87,6 +87,15 @@ public actor ConnectorManager {
         self.processEnvironment = ProcessInfo.processInfo.environment
     }
 
+    private var verboseDiscoveryLogging: Bool {
+        processEnvironment["BRIDGEPORT_VERBOSE_DISCOVERY"] == "1"
+    }
+
+    private func logDiscoverySkip(_ message: String) {
+        guard verboseDiscoveryLogging else { return }
+        logMessage(message)
+    }
+
     public static func normalizedUniquePaths(_ paths: [String]) -> [String] {
         var normalized: [String] = []
         var seen: Set<String> = []
@@ -124,7 +133,7 @@ public actor ConnectorManager {
                 guard !seenNames.contains(name) else { continue }
                 let command = imported.command.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !command.isEmpty, Self.isLocalCommand(command) else {
-                    logMessage("ConnectorManager: Skipping imported MCP '\(name)' with non-local command")
+                    logDiscoverySkip("ConnectorManager: Skipping imported MCP '\(name)' with non-local command")
                     continue
                 }
                 seenNames.insert(name)
@@ -144,7 +153,7 @@ public actor ConnectorManager {
         for path in paths {
             var isDir: ObjCBool = false
             guard fileManager.fileExists(atPath: path, isDirectory: &isDir) else {
-                logMessage("ConnectorManager: Skipping missing connector source \(path)")
+                logDiscoverySkip("ConnectorManager: Skipping missing connector source \(path)")
                 continue
             }
 
@@ -235,19 +244,19 @@ public actor ConnectorManager {
 
             for (serverName, serverDict) in servers {
                 if serverDict["url"] != nil && serverDict["command"] == nil {
-                    logMessage("ConnectorManager: Skipping web-hosted MCP '\(serverName)' (has URL, no command)")
+                    logDiscoverySkip("ConnectorManager: Skipping web-hosted MCP '\(serverName)' (has URL, no command)")
                     continue
                 }
 
                 guard let rawCommand = serverDict["command"] as? String else { continue }
                 let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !command.isEmpty, Self.isLocalCommand(command) else {
-                    logMessage("ConnectorManager: Skipping MCP '\(serverName)' with non-local command")
+                    logDiscoverySkip("ConnectorManager: Skipping MCP '\(serverName)' with non-local command")
                     continue
                 }
 
                 guard !seenNames.contains(serverName) else {
-                    logMessage("ConnectorManager: Skipping duplicate connector '\(serverName)' from \(configURL.path)")
+                    logDiscoverySkip("ConnectorManager: Skipping duplicate connector '\(serverName)' from \(configURL.path)")
                     continue
                 }
                 seenNames.insert(serverName)
@@ -287,18 +296,18 @@ public actor ConnectorManager {
 
         for (serverName, serviceConfig) in servers.sorted(by: { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }) {
             if serviceConfig.url != nil && serviceConfig.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                logMessage("ConnectorManager: Skipping web-hosted Codex MCP '\(serverName)'")
+                logDiscoverySkip("ConnectorManager: Skipping web-hosted Codex MCP '\(serverName)'")
                 continue
             }
 
             let command = serviceConfig.command.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !command.isEmpty, Self.isLocalCommand(command) else {
-                logMessage("ConnectorManager: Skipping Codex MCP '\(serverName)' with non-local command")
+                logDiscoverySkip("ConnectorManager: Skipping Codex MCP '\(serverName)' with non-local command")
                 continue
             }
 
             guard !seenNames.contains(serverName) else {
-                logMessage("ConnectorManager: Skipping duplicate connector '\(serverName)' from \(configURL.path)")
+                logDiscoverySkip("ConnectorManager: Skipping duplicate connector '\(serverName)' from \(configURL.path)")
                 continue
             }
             seenNames.insert(serverName)
@@ -532,6 +541,7 @@ public actor ConnectorManager {
     private static func isLocalCommand(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+        guard !trimmed.hasPrefix("-") else { return false }
         return !hasURLScheme(trimmed)
     }
 
@@ -789,15 +799,21 @@ public actor ConnectorManager {
     public func resolveEnvironment(for connector: Connector) async -> [String: String] {
         var sourceEnv = processEnvironment
         sourceEnv.merge(loadOnePasswordLocalEnv(), uniquingKeysWith: { _, new in new })
+        let connectorEnvNames = Set(connector.requiredEnvVarNames).union(connector.env.keys)
 
         for (key, val) in configOverrides {
-            sourceEnv[key] = await resolveValueSource(expandShellStyleVariables(in: val, environment: sourceEnv, preserveMissing: false))
+            let expanded = expandShellStyleVariables(in: val, environment: sourceEnv, preserveMissing: false)
+            guard connectorEnvNames.contains(key) || !expanded.hasPrefix("op://") else {
+                continue
+            }
+            sourceEnv[key] = await resolveValueSource(expanded)
         }
 
         var resolvedEnv = sourceEnv
         resolvedEnv["PATH"] = enrichedPath(from: sourceEnv["PATH"])
 
         for (key, val) in connector.env {
+            guard resolvedEnv[key] == nil else { continue }
             let expandedVal = expandShellStyleVariables(in: val, environment: sourceEnv, preserveMissing: false)
             resolvedEnv[key] = await resolveValueSource(expandedVal)
         }
@@ -918,7 +934,16 @@ public actor ConnectorManager {
 
         do {
             try process.run()
-            process.waitUntilExit()
+            let deadline = Date().addingTimeInterval(10)
+            while process.isRunning && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+
+            if process.isRunning {
+                process.terminate()
+                logMessage("ConnectorManager: 1Password CLI read timed out")
+                return ""
+            }
 
             if process.terminationStatus == 0 {
                 let data = outputPipe.fileHandleForReading.readDataToEndOfFile()

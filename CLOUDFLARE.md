@@ -143,23 +143,28 @@ Content-Type: application/json
 
 Avoid `?token=` URLs for public routes. They leak into logs, browser history, proxy analytics, and screenshots.
 
-## Claude And Mistral Cloud Connectors
+## Claude, Mistral, And Cloud Connectors
 
 Bridgeport also writes `~/.config/bridgeport/cloud_connectors.json` and shows the same details in the **Cloud Connectors** settings pane.
 
-Claude custom connectors connect from Anthropic's cloud infrastructure, so the URL must be reachable from the public internet through Cloudflare. The Claude app dialog accepts a remote MCP server URL and optional OAuth client details, but does not provide a static `Authorization` header field. Bridgeport therefore offers two paths:
+Claude, ChatGPT, and Mistral custom connectors connect from cloud infrastructure, so the URL must be reachable from the public internet through Cloudflare. Keep `allowQueryTokenAuth` disabled unless you are testing a legacy client that cannot send headers or use OAuth.
 
-- **Claude app custom connector:** enable query-token fallback, then copy the Claude URL from Bridgeport. Use this only for private, Cloudflare-protected endpoints.
+- **Claude app custom connector:** copy the normal remote MCP URL from Bridgeport. Claude discovers Bridgeport's OAuth 2.1 authorization-code flow with PKCE from the protected-resource metadata on unauthorized MCP responses. Bridgeport's approval page requires the Bridgeport token before it issues an OAuth authorization code, so protect the public hostname with Cloudflare Access or equivalent policy and treat the token as a secret.
+- **ChatGPT custom app:** use an OAuth front door for production. Bridgeport emits a query-token URL only when fallback is explicitly enabled, and marks ChatGPT as not ready otherwise.
 - **Anthropic Messages API:** copy the generated MCP server JSON. It uses `authorization_token`, so the token is not placed in the URL.
 
-Mistral Work custom connectors and Vibe Code can use the public URL with Bearer auth:
+Mistral Work/Vibe custom connectors and Vibe Code can use the public URL with Bearer auth:
 
 ```text
 Server URL: https://mcp.amesvt.com/mcp/ynab-mcp-server
 Authorization: Bearer ames_...
 ```
 
-Bridgeport returns `WWW-Authenticate: Bearer realm="Bridgeport"` on unauthorized requests so Mistral's custom connector flow can auto-detect Bearer authentication.
+For reliable Mistral connector-card artwork, use the generated Mistral API create payload from `cloud_connectors.json`. It includes Bridgeport's cache-busted `/icons/<connector>?v=...` URL as `icon_url`, plus the private visibility setting and authorization header.
+
+Bridgeport returns `WWW-Authenticate: Bearer realm="Bridgeport", resource_metadata="..."` on unauthorized requests so OAuth-capable clients can discover authorization metadata and Bearer-capable clients can detect header authentication.
+
+Bridgeport also serves connector-card artwork at `/icons/<connector>`. MCP `initialize` responses include `serverInfo.icons` and `serverInfo.iconUrl` with a deterministic `?v=` cache key, and the Mistral export carries the same cache-busted icon endpoint as `icon_url` for clients that require artwork during connector registration.
 
 ## Cloudflare Controls
 

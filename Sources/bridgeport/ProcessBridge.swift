@@ -134,7 +134,7 @@ public actor ProcessBridge {
     }
 
     static func envLaunchArguments(for connector: Connector) -> [String] {
-        ["--", connector.command] + connector.args
+        [connector.command] + connector.args
     }
 
     private static func drainStderrLoop(pipe: Pipe) async {

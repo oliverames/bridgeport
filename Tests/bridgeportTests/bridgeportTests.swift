@@ -83,6 +83,7 @@ import Testing
     try """
     YNAB_API_TOKEN=from-mounted-env
     SHARED_VALUE=from-mounted-env
+    YNAB_ALLOW_WRITES=0
     """.write(to: envFile, atomically: true, encoding: .utf8)
 
     let connector = Connector(
@@ -93,7 +94,8 @@ import Testing
         args: [],
         env: [
             "CONNECTOR_TOKEN": "${YNAB_API_TOKEN}",
-            "SHARED_VALUE": "from-connector"
+            "SHARED_VALUE": "from-connector",
+            "YNAB_ALLOW_WRITES": "1"
         ],
         importedFrom: root.path,
         sourceKind: .imported
@@ -113,7 +115,40 @@ import Testing
     #expect(resolved["CONFIG_ONLY"] == "from-config")
     #expect(resolved["CONFIG_FROM_MOUNT"] == "from-mounted-env")
     #expect(resolved["CONNECTOR_TOKEN"] == "from-mounted-env")
-    #expect(resolved["SHARED_VALUE"] == "from-connector")
+    #expect(resolved["SHARED_VALUE"] == "from-mounted-env")
+    #expect(resolved["YNAB_ALLOW_WRITES"] == "0")
+}
+
+@Test func unusedOnePasswordConfigReferencesAreNotInjectedIntoConnectorEnvironment() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let connector = Connector(
+        name: "minimal",
+        directoryPath: root.path,
+        configPath: root.appendingPathComponent(".mcp.json").path,
+        command: "node",
+        args: [],
+        env: [
+            "USED_TOKEN": "${USED_TOKEN}"
+        ],
+        importedFrom: root.path,
+        sourceKind: .imported
+    )
+    let config = BridgeportConfig(
+        env: [
+            "SAFE_FLAG": "enabled",
+            "UNUSED_SECRET": "op://Development/Unused/credential",
+            "USED_TOKEN": "from-config"
+        ]
+    )
+    let manager = ConnectorManager(config: config, processEnvironment: ["PATH": "/usr/bin"])
+
+    let resolved = await manager.resolveEnvironment(for: connector)
+
+    #expect(resolved["SAFE_FLAG"] == "enabled")
+    #expect(resolved["USED_TOKEN"] == "from-config")
+    #expect(resolved["UNUSED_SECRET"] == nil)
 }
 
 @Test func discoversRelativePluginManifestMCPConfig() async throws {
@@ -237,6 +272,13 @@ import Testing
                 configPath: root.appendingPathComponent(".mcp.json").path,
                 importedFrom: root.path
             ),
+            "option": BridgeportImportedConnector(
+                command: "-S",
+                args: ["node server.js"],
+                directoryPath: root.path,
+                configPath: root.appendingPathComponent(".mcp.json").path,
+                importedFrom: root.path
+            ),
             "good": BridgeportImportedConnector(
                 command: "node",
                 args: ["server.js"],
@@ -337,7 +379,28 @@ import Testing
     }
 }
 
-@Test func cloudConnectorExportCoversClaudeAnthropicMistralAndVibe() {
+@Test func malformedExistingConfigIsNotOverwrittenOnLoad() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let configURL = root.appendingPathComponent("config.json")
+    let original = "{not-json"
+    try original.write(to: configURL, atomically: true, encoding: .utf8)
+
+    let manager = ConfigManager(
+        configURL: configURL,
+        clientConfigURL: root.appendingPathComponent("mcp_config.json"),
+        cloudConnectorConfigURL: root.appendingPathComponent("cloud_connectors.json")
+    )
+
+    _ = await manager.load()
+
+    let afterLoad = try String(contentsOf: configURL, encoding: .utf8)
+    #expect(afterLoad == original)
+    #expect(await manager.loadedExistingConfigFailedToDecode())
+}
+
+@Test func cloudConnectorExportCoversChatGPTClaudeAnthropicMistralAndVibe() {
     let connector = Connector(
         name: "mock",
         directoryPath: "/tmp/mock",
@@ -376,12 +439,22 @@ import Testing
     )
 
     #expect(export.claudeCustomConnectors.count == 1)
-    #expect(export.claudeCustomConnectors.first?.remoteMCPServerURL == "https://mcp.example.com/mcp/mock?token=test-token")
+    #expect(export.claudeCustomConnectors.first?.remoteMCPServerURL == "https://mcp.example.com/mcp/mock")
     #expect(export.claudeCustomConnectors.first?.readyForClaudeApp == true)
+    #expect(export.claudeCustomConnectors.first?.authentication == "OAuth 2.1 authorization code with PKCE")
+    #expect(export.chatGPTCustomApps.count == 1)
+    #expect(export.chatGPTCustomApps.first?.mcpServerURL == "https://mcp.example.com/mcp/mock?token=test-token")
+    #expect(export.chatGPTCustomApps.first?.readyForChatGPT == true)
     #expect(export.anthropicMessagesAPIMCPServers.first?.url == "https://mcp.example.com/mcp/mock")
     #expect(export.anthropicMessagesAPIMCPServers.first?.authorizationToken == "test-token")
     #expect(export.mistralCustomConnectors.first?.authenticationMethod == "HTTP Bearer Token")
     #expect(export.mistralCustomConnectors.first?.authorizationHeader == "Bearer test-token")
+    #expect(export.mistralCustomConnectors.first?.iconURL == "https://mcp.example.com/icons/mock")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.name == "bridgeport_mock")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.server == "https://mcp.example.com/mcp/mock")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.iconURL == "https://mcp.example.com/icons/mock")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.visibility == "private")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.headers["Authorization"] == "Bearer test-token")
     #expect(export.vibeCodeMCPServers.first?.transport == "streamable-http")
     #expect(export.vibeCodeMCPServers.first?.toml.contains("headers = { \"Authorization\" = \"Bearer test-token\" }") == true)
 
@@ -396,15 +469,117 @@ import Testing
     )
     let headerOnlyExport = ConfigManager.cloudConnectorExport(config: headerOnlyConfig, connectors: [connector])
 
-    #expect(headerOnlyExport.claudeCustomConnectors.first?.readyForClaudeApp == false)
+    #expect(headerOnlyExport.claudeCustomConnectors.first?.readyForClaudeApp == true)
     #expect(headerOnlyExport.claudeCustomConnectors.first?.remoteMCPServerURL == "https://mcp.example.com/mcp/mock")
+    #expect(headerOnlyExport.chatGPTCustomApps.first?.readyForChatGPT == false)
+    #expect(headerOnlyExport.chatGPTCustomApps.first?.mcpServerURL == "https://mcp.example.com/mcp/mock")
     #expect(headerOnlyExport.anthropicMessagesAPIMCPServers.first?.authorizationToken == "test-token")
+}
+
+@Test func mistralConnectorIconURLIncludesCacheKeyWhenIconAssetExists() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let assets = root.appendingPathComponent("assets")
+    try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+    let icon = assets.appendingPathComponent("icon.png")
+    try Data([0, 1, 2, 3]).write(to: icon)
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSince1970: 1_234)],
+        ofItemAtPath: icon.path
+    )
+
+    let connector = Connector(
+        name: "mock",
+        directoryPath: root.path,
+        configPath: root.appendingPathComponent(".mcp.json").path,
+        command: "python3",
+        args: [],
+        env: [:],
+        importedFrom: root.path,
+        sourceKind: .imported
+    )
+    let config = BridgeportConfig(
+        token: "test-token",
+        port: 8080,
+        publicBaseURL: "https://mcp.example.com",
+        connectorSettings: [
+            "mock": BridgeportConnectorSettings(enabled: true, exposePublicly: true, publicPath: "/mock")
+        ]
+    )
+
+    let export = ConfigManager.mistralCustomConnector(config: config, connector: connector)
+
+    #expect(export.iconURL == "https://mcp.example.com/icons/mock?v=4-1234")
+    #expect(export.apiCreatePayload.iconURL == "https://mcp.example.com/icons/mock?v=4-1234")
+}
+
+@Test func mistralSafeConnectorNamesMatchAPIContract() {
+    #expect(ConfigManager.mistralSafeConnectorName("Bridgeport YNAB") == "Bridgeport_YNAB")
+    #expect(ConfigManager.mistralSafeConnectorName("ynab-mcp-server") == "ynab-mcp-server")
+    #expect(ConfigManager.mistralSafeConnectorName("***") == "bridgeport_connector")
+    #expect(ConfigManager.mistralSafeConnectorName(String(repeating: "a", count: 80)).count == 64)
 }
 
 @Test func constantTimeTokenComparisonMatchesExactStringsOnly() {
     #expect(SSEServer.constantTimeEquals("Bearer test-token", "Bearer test-token"))
     #expect(!SSEServer.constantTimeEquals("Bearer test-token", "Bearer test-token-extra"))
     #expect(!SSEServer.constantTimeEquals("Bearer test-token", "bearer test-token"))
+}
+
+@Test func wwwAuthenticateQuotedValuesEscapeUnsafeCharacters() {
+    #expect(SSEServer.wwwAuthenticateQuotedValue("https://example.com/mcp/ynab") == "https://example.com/mcp/ynab")
+    #expect(SSEServer.wwwAuthenticateQuotedValue("https://example.com/quote\"slash\\line\nnext\r") == #"https://example.com/quote\"slash\\linenext"#)
+}
+
+@Test func initializeResponseGetsConnectorIconMetadataWhenMissing() throws {
+    let response = """
+    {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","serverInfo":{"name":"mcp-server-for-ynab","version":"3.0.0"}}}
+    """
+    let decorated = BridgeSession.messageWithBridgeportIconMetadata(
+        response,
+        iconURL: "https://bridgeport.example.com/icons/ynab"
+    )
+    let data = try #require(decorated.data(using: .utf8))
+    let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let result = try #require(object["result"] as? [String: Any])
+    let serverInfo = try #require(result["serverInfo"] as? [String: Any])
+    let icons = try #require(serverInfo["icons"] as? [[String: Any]])
+    let firstIcon = try #require(icons.first)
+
+    #expect(firstIcon["src"] as? String == "https://bridgeport.example.com/icons/ynab")
+    #expect(firstIcon["mimeType"] as? String == "image/png")
+    #expect(result["serverCardIconUrl"] as? String == "https://bridgeport.example.com/icons/ynab")
+
+    let upstreamIconResponse = """
+    {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"mock","icons":[{"src":"https://upstream/icon.png","mimeType":"image/png"}]}}}
+    """
+    let preserved = BridgeSession.messageWithBridgeportIconMetadata(
+        upstreamIconResponse,
+        iconURL: "https://bridgeport.example.com/icons/mock"
+    )
+    #expect(preserved == upstreamIconResponse)
+}
+
+@Test func oauthAccessTokensAreScopedToAuthorizedResource() async {
+    let store = OAuthTokenStore()
+    let client = await store.registerClient(clientName: "Probe", redirectURIs: ["http://localhost/callback"])
+    let code = await store.issueAuthorizationCode(
+        clientID: client.clientID,
+        redirectURI: "http://localhost/callback",
+        codeChallenge: OAuthSupport.pkceS256Challenge(for: "verifier"),
+        resource: "https://bridgeport.example.com/mcp/ynab"
+    )
+    let token = await store.redeemAuthorizationCode(
+        code: code ?? "",
+        clientID: client.clientID,
+        redirectURI: "http://localhost/callback",
+        codeVerifier: "verifier"
+    )
+
+    #expect(token != nil)
+    #expect(await store.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/ynab"))
+    #expect(!(await store.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/apple-notes")))
 }
 
 @Test func generatedTokensUseURLSafeCharacters() {
@@ -416,19 +591,19 @@ import Testing
     })
 }
 
-@Test func processBridgeTerminatesEnvOptionsBeforeConnectorCommand() {
+@Test func processBridgeUsesPortableEnvLaunchArguments() {
     let connector = Connector(
-        name: "option-like",
+        name: "node-server",
         directoryPath: "/tmp",
         configPath: "/tmp/.mcp.json",
-        command: "-S",
-        args: ["node server.js"],
+        command: "node",
+        args: ["server.js", "--flag"],
         env: [:],
         importedFrom: "/tmp/.mcp.json",
         sourceKind: .imported
     )
 
-    #expect(ProcessBridge.envLaunchArguments(for: connector) == ["--", "-S", "node server.js"])
+    #expect(ProcessBridge.envLaunchArguments(for: connector) == ["node", "server.js", "--flag"])
 }
 
 @Test func launchAgentPlistEscapesSpecialCharacters() throws {

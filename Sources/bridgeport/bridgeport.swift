@@ -39,8 +39,36 @@ func isServiceLoaded(label: String, uid: uid_t) -> Bool {
 @main
 struct bridgeport {
     static func main() async {
+        let args = CommandLine.arguments
+        func isAppLaunchArgument(_ argument: String) -> Bool {
+            argument == "--open-settings" || argument.hasPrefix("--open-settings=")
+        }
+
+        let requestedSettingsWindow = args.dropFirst().contains(where: isAppLaunchArgument)
+        let isBridgeportCLIInvocation = args.dropFirst().contains {
+            $0.hasPrefix("--") && !isAppLaunchArgument($0)
+        }
+
+        if requestedSettingsWindow {
+            setenv("BRIDGEPORT_OPEN_SETTINGS", "1", 1)
+            if let pane = args.dropFirst().first(where: { $0.hasPrefix("--open-settings=") })?.split(separator: "=", maxSplits: 1).last {
+                setenv("BRIDGEPORT_SETTINGS_PANE", String(pane), 1)
+            }
+        }
+
+        if !isBridgeportCLIInvocation {
+            #if os(macOS)
+            BridgeportApp.main()
+            #else
+            print("GUI mode is only supported on macOS.")
+            exit(1)
+            #endif
+            return
+        }
+
         let configManager = ConfigManager()
         var config = await configManager.load()
+        let loadedExistingConfigFailedToDecode = await configManager.loadedExistingConfigFailedToDecode()
 
         var port: UInt16 = config.port ?? 8080
         var token: String? = config.token
@@ -65,7 +93,6 @@ struct bridgeport {
         var isServerMode = false
         var shouldRegenerateAllowedOrigins = false
 
-        let args = CommandLine.arguments
         var i = 1
         while i < args.count {
             switch args[i] {
@@ -261,13 +288,9 @@ struct bridgeport {
         }
 
         if !isServerMode {
-            #if os(macOS)
-            BridgeportApp.main()
-            #else
-            print("GUI mode is only supported on macOS.")
+            print("Error: --server is required for command-line server mode.")
+            print("Usage: bridgeport [--server] [--port <port>] [--token <token>] [--connectors-path <path>] [--public-base-url <url>] [--bind-host <host>] [--allow-query-token-auth] [--daemon-install] [--daemon-uninstall] [--daemon-status] [--rotate-token]")
             exit(1)
-            #endif
-            return
         }
 
         // Resolve token from env if not set in config/args
@@ -295,7 +318,11 @@ struct bridgeport {
         config.connectorSettings = config.connectorSettings ?? ConfigManager.settingsFromLegacyDisabled(config.disabledConnectors ?? [])
         config.importedConnectors = config.importedConnectors ?? [:]
         config.onePasswordEnvironment = config.onePasswordEnvironment ?? OnePasswordEnvironmentSettings()
-        await configManager.save(config)
+        if loadedExistingConfigFailedToDecode {
+            logMessage("Skipping implicit config save because the existing config file could not be decoded.")
+        } else {
+            await configManager.save(config)
+        }
 
         logMessage("Initializing Bridgeport with connectors path: \(connectorsPath)")
         if let additionalConnectorPaths = config.additionalConnectorPaths, !additionalConnectorPaths.isEmpty {
@@ -311,8 +338,17 @@ struct bridgeport {
             logMessage("Discovered \(connectors.count) connector(s):")
             for connector in connectors {
                 logMessage("  - \(connector.name) (\(connector.directoryPath))")
-                let baseURL = ConfigManager.clientEndpointBaseURL(port: port, publicBaseURL: publicBaseURL)
-                logMessage("    MCP endpoint: \(ConfigManager.mcpEndpointURL(baseURL: baseURL, routePath: config.publicRoutePath(for: connector)))")
+                let routePath = config.publicRoutePath(for: connector)
+                let localURL = ConfigManager.mcpEndpointURL(baseURL: "http://localhost:\(port)", routePath: routePath)
+                let settings = config.settings(for: connector.name)
+                if !settings.enabled {
+                    logMessage("    Disabled")
+                } else if settings.exposePublicly && !publicBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let publicBase = ConfigManager.clientEndpointBaseURL(port: port, publicBaseURL: publicBaseURL)
+                    logMessage("    Public MCP endpoint: \(ConfigManager.mcpEndpointURL(baseURL: publicBase, routePath: routePath))")
+                } else {
+                    logMessage("    Local MCP endpoint: \(localURL)")
+                }
             }
         }
 

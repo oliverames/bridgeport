@@ -6,7 +6,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, Sendable {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run as an accessory app (menu bar only, no Dock icon)
         NSApp.setActivationPolicy(.accessory)
-        SettingsWindowCoordinator.shared.installAppMenuItem()
+        DispatchQueue.main.async {
+            SettingsWindowCoordinator.shared.installAppMenuItem()
+            SettingsWindowCoordinator.shared.openSettingsIfRequested()
+        }
     }
 }
 
@@ -37,12 +40,12 @@ struct BridgeportApp: App {
             }
             .keyboardShortcut(",", modifiers: .command)
 
-            Button("Refresh") {
+            Button(appState.isReloading ? "Refreshing" : "Refresh") {
                 Task {
-                    appState.checkDaemonStatus()
-                    await appState.refreshDaemonRuntimeStatus()
+                    await appState.reload()
                 }
             }
+            .disabled(appState.isReloading)
 
             Button(appState.isDaemonRunning ? "Restart Daemon" : "Start Daemon") {
                 Task {

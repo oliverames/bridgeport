@@ -25,6 +25,7 @@ public final class AppState {
     public var isDaemonInstalled: Bool = false
     public var isDaemonRunning: Bool = false
     public var isShowingToken: Bool = false
+    public var isReloading: Bool = false
     public var activeSessionCount: Int = 0
     public var activeSessionsByConnector: [String: Int] = [:]
     public var lastStatusMessage: String = "Not checked"
@@ -79,6 +80,11 @@ public final class AppState {
     }
 
     public func reload() async {
+        guard !isReloading else { return }
+        isReloading = true
+        defer { isReloading = false }
+
+        lastStatusMessage = "Refreshing..."
         let config = await configManager.load()
         apply(config)
 
@@ -144,6 +150,11 @@ public final class AppState {
         var importedCount = 0
 
         for connector in connectors {
+            guard importedConnectors[connector.name] == nil else {
+                lastStatusMessage = "Skipped existing imported connector: \(connector.name)"
+                continue
+            }
+
             importedConnectors[connector.name] = BridgeportImportedConnector(
                 command: connector.command,
                 args: connector.args,
@@ -352,9 +363,14 @@ public final class AppState {
     public func claudeCustomConnectorURL(for connector: Connector) -> String? {
         let config = currentConfig()
         guard ConfigManager.publicConnectors(config: config, connectors: [connector]).isEmpty == false else { return nil }
-        guard config.allowQueryTokenAuth == true else { return nil }
         let baseURL = ConfigManager.clientEndpointBaseURL(port: config.port ?? 8080, publicBaseURL: config.publicBaseURL)
-        return ConfigManager.mcpEndpointURL(baseURL: baseURL, routePath: config.publicRoutePath(for: connector), queryToken: config.token)
+        return ConfigManager.mcpEndpointURL(baseURL: baseURL, routePath: config.publicRoutePath(for: connector))
+    }
+
+    public func chatGPTCustomAppURL(for connector: Connector) -> String? {
+        let config = currentConfig()
+        guard ConfigManager.publicConnectors(config: config, connectors: [connector]).isEmpty == false else { return nil }
+        return ConfigManager.chatGPTCustomApp(config: config, connector: connector).mcpServerURL
     }
 
     public func anthropicMessagesAPIJSON(for connector: Connector) -> String {

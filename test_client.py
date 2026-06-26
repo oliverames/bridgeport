@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 TOKEN = "test_token_123"
@@ -66,7 +67,7 @@ def write_isolated_config(config_home, port):
     config = {
         "token": TOKEN,
         "port": port,
-        "publicBaseURL": "",
+        "publicBaseURL": f"http://localhost:{port}",
         "bindHost": "127.0.0.1",
         "allowedOrigins": [
             f"http://localhost:{port}",
@@ -77,7 +78,13 @@ def write_isolated_config(config_home, port):
         "connectorsPath": CONNECTORS_PATH,
         "additionalConnectorPaths": [],
         "importedConnectors": {},
-        "connectorSettings": {},
+        "connectorSettings": {
+            "mock-echo": {
+                "enabled": True,
+                "exposePublicly": True,
+                "publicPath": "mock-echo",
+            },
+        },
         "onePasswordEnvironment": {
             "enabled": False,
             "accountId": "",
@@ -210,7 +217,60 @@ def run_tests():
                 raise AssertionError("Status endpoint did not return connectors")
             log("PASS: Status endpoint returned connector runtime data")
 
-            log("Test 8: Disallowed Origin is rejected...")
+            log("Test 8: Public connector icons support HEAD and GET...")
+            icon_url = f"http://localhost:{port}/icons/mock-echo"
+            head_response = urllib.request.urlopen(
+                urllib.request.Request(icon_url, method="HEAD"),
+                timeout=10,
+            )
+            if head_response.code != 200:
+                raise AssertionError(f"Expected 200 from icon HEAD, got {head_response.code}")
+            icon_type = head_response.headers.get("Content-Type", "")
+            if not icon_type.startswith("image/"):
+                raise AssertionError(f"Expected image content type from icon HEAD, got {icon_type!r}")
+            icon_response = urllib.request.urlopen(urllib.request.Request(icon_url), timeout=10)
+            icon_body = icon_response.read()
+            if not icon_body:
+                raise AssertionError("Icon GET returned an empty body")
+            log("PASS: Public icon endpoint handles HEAD and GET")
+
+            log("Test 9: OAuth authorization requires a scoped public resource...")
+            register_req = urllib.request.Request(
+                f"http://localhost:{port}/oauth/register",
+                data=json.dumps({
+                    "client_name": "Smoke Test",
+                    "redirect_uris": ["http://localhost/callback"],
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            register_response = urllib.request.urlopen(register_req, timeout=10)
+            client_id = json.loads(register_response.read().decode("utf-8"))["client_id"]
+            authorize_params = {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": "http://localhost/callback",
+                "code_challenge": "test-challenge",
+                "code_challenge_method": "S256",
+            }
+            try:
+                urllib.request.urlopen(
+                    f"http://localhost:{port}/oauth/authorize?{urllib.parse.urlencode(authorize_params)}",
+                    timeout=10,
+                )
+                raise AssertionError("Expected OAuth authorization without resource to be rejected")
+            except urllib.error.HTTPError as e:
+                if e.code != 400:
+                    raise
+            authorize_params["resource"] = f"http://localhost:{port}/mcp/mock-echo"
+            authorize_response = urllib.request.urlopen(
+                f"http://localhost:{port}/oauth/authorize?{urllib.parse.urlencode(authorize_params)}",
+                timeout=10,
+            )
+            if authorize_response.code != 200:
+                raise AssertionError(f"Expected OAuth approval form, got {authorize_response.code}")
+            log("PASS: OAuth authorization rejects missing resource and accepts public connector resource")
+
+            log("Test 10: Disallowed Origin is rejected...")
             bad_origin_req = request(
                 f"http://localhost:{port}/mcp/mock-echo",
                 json.dumps(payload).encode("utf-8"),
@@ -224,7 +284,7 @@ def run_tests():
                     raise
                 log("PASS: Disallowed Origin rejected")
 
-            log("Test 9: Oversized MCP request body is rejected...")
+            log("Test 11: Oversized MCP request body is rejected...")
             oversized_req = request(
                 f"http://localhost:{port}/mcp/mock-echo",
                 b"x" * (1024 * 1024 + 1),

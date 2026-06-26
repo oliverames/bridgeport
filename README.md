@@ -1,10 +1,16 @@
 # Bridgeport
 
+<p align="center">
+  <img src="Resources/AppIcon.iconset/icon_128x128.png" alt="Bridgeport app icon" width="96" height="96">
+</p>
+
+<p align="center">
+  <strong>Personal MCP gateway for Mac-local connectors.</strong>
+</p>
+
 Bridgeport is a macOS 26 Tahoe menu bar utility and LaunchAgent daemon that turns this Mac into a personal MCP gateway. It discovers local stdio MCP servers from the tools already installed on the Mac, runs them on demand, and exposes them as authenticated local or Cloudflare-routed MCP endpoints.
 
 Bridgeport is intended for connectors that need this Mac, local app data, local credentials, or inexpensive personal hosting. URL-only MCP servers are skipped because they already have hosted equivalents.
-
-**Tagline:** Personal MCP gateway for Mac-local connectors.
 
 ## What It Does
 
@@ -40,10 +46,11 @@ Bridgeport:
 3. Imports MCP definitions into Bridgeport-owned config, or mirrors external sources live.
 4. Spawns each connector process on demand and bridges JSON-RPC over stdin/stdout.
 5. Exposes modern Streamable HTTP endpoints at `/mcp/<connector>` plus legacy SSE endpoints at `/<connector>/sse` and `/<connector>/message`.
-6. Authenticates with `Authorization: Bearer <token>` by default and advertises Bearer auth on 401 responses for remote connector auto-detection.
-7. Generates cloud connector exports for Claude custom connectors, Anthropic Messages API MCP connectors, Mistral Work custom connectors, and Vibe Code CLI.
+6. Authenticates with `Authorization: Bearer <token>` by default and advertises OAuth 2.1 metadata for cloud custom-connector clients.
+7. Generates cloud connector exports for Claude custom connectors, ChatGPT custom apps, Anthropic Messages API MCP connectors, Mistral Work/Vibe custom connectors, and Vibe Code CLI.
 8. Shows active sessions, enabled connector count, public exposure state, and connector source paths in the UI.
-9. Resolves secrets from process env, a mounted 1Password Environment `.env` file, Bridgeport config env, connector env, and `op://` references. Defaults are seeded from `~/.claude/.env` so Bridgeport stores references, not plaintext secrets.
+9. Resolves only the secrets each connector declares or references from process env, a mounted 1Password Environment `.env` file, Bridgeport config env, connector env, and `op://` references. Defaults are seeded from `~/.claude/.env` so Bridgeport stores references, not plaintext secrets.
+10. Serves connector icons from bundled local assets, declared HTTPS logo URLs, or deterministic SVG fallbacks so cloud connector cards do not fall back to tunnel-provider branding.
 
 ## Quick Start
 
@@ -162,7 +169,11 @@ Query-string tokens are disabled by default. Keep them off unless a legacy clien
 
 Bridgeport writes public connector exports to `~/.config/bridgeport/cloud_connectors.json` and surfaces the same values in the **Cloud Connectors** settings pane. Only enabled connectors with the **Public** toggle are included.
 
-Claude custom connectors are reached from Anthropic's cloud, not from this Mac. The Claude app custom connector dialog currently accepts a name, remote MCP server URL, and optional OAuth client details. It does not provide a static bearer-header field, so Bridgeport only marks Claude app URLs as ready when query-token fallback is explicitly enabled.
+ChatGPT custom apps, Claude custom connectors, and Mistral custom connectors are reached from cloud infrastructure, not from this Mac. Set `publicBaseURL` to a Cloudflare Tunnel hostname, keep `allowQueryTokenAuth` off, and expose only the connectors you intend to make public.
+
+Claude custom connectors use Bridgeport's built-in OAuth 2.1 authorization-code flow with PKCE and dynamic client registration. The remote MCP URL is the normal endpoint, for example `https://mcp.example.com/mcp/ynab`; Claude discovers Bridgeport's authorization and token endpoints from the protected-resource metadata advertised on 401 responses. The Bridgeport approval page requires the Bridgeport token before it issues an OAuth authorization code, so keep the public hostname behind Cloudflare Access or equivalent policy and treat that token as a secret.
+
+ChatGPT custom apps currently require an OAuth front door for production. Bridgeport exports a query-token URL only when fallback is explicitly enabled, otherwise it copies the normal MCP URL and marks the ChatGPT entry as not ready.
 
 Anthropic Messages API MCP connector definitions use `authorization_token`, so they can keep header-style auth without putting a token in the URL:
 
@@ -175,7 +186,7 @@ Anthropic Messages API MCP connector definitions use `authorization_token`, so t
 }
 ```
 
-Mistral Work custom connectors can use the same public MCP URL and select or auto-detect HTTP Bearer Token auth:
+Mistral Work/Vibe custom connectors can use the same public MCP URL and select or auto-detect HTTP Bearer Token auth in the UI:
 
 ```text
 Name: apple-notes
@@ -183,6 +194,8 @@ Server URL: https://mcp.amesvt.com/mcp/apple-notes
 Authentication: HTTP Bearer Token
 Authorization header: Bearer ames_...
 ```
+
+For connector-card artwork, prefer the generated Mistral API create payload in `cloud_connectors.json`. It includes the server URL, private visibility, bearer header, and Bridgeport's cache-busted `/icons/<connector>?v=...` URL as `icon_url`, which avoids Mistral falling back to the Cloudflare tunnel favicon.
 
 Vibe Code CLI can use the generated TOML:
 
@@ -193,6 +206,16 @@ transport = "streamable-http"
 url = "https://mcp.amesvt.com/mcp/apple-notes"
 headers = { "Authorization" = "Bearer ames_..." }
 ```
+
+Provider authentication summary:
+
+| Provider | Recommended production auth | Bridgeport export behavior |
+|----------|-----------------------------|----------------------------|
+| ChatGPT custom apps | OAuth in front of the remote MCP endpoint | Copies a query-token URL only when fallback is enabled, otherwise marks the URL as not ready |
+| Claude app custom connectors | Bridgeport OAuth 2.1 with PKCE | Copies the normal remote MCP URL and marks it ready |
+| Anthropic Messages API | `authorization_token` | Exports header-style bearer auth without URL tokens |
+| Mistral Work/Vibe custom connectors | HTTP Bearer Token | Exports server URL plus `Bearer <token>` |
+| Vibe Code CLI | Authorization header in TOML | Exports `streamable-http` TOML with bearer header |
 
 ## Import vs Mirror
 
@@ -210,14 +233,14 @@ The Sources settings pane also has one-click actions for the default Claude Code
 
 ## Environment And 1Password
 
-Connector processes receive environment values in this order, with later sources overriding earlier ones:
+Connector processes receive environment values in this order. User-owned values win over connector defaults so a mirrored MCP definition cannot silently override local safety settings such as `YNAB_ALLOW_WRITES=0`.
 
 1. Bridgeport daemon process environment.
 2. Mounted 1Password Environment `.env` file, when enabled in Settings.
 3. Bridgeport `env` values from `config.json`.
-4. Connector-specific `env` values from the MCP definition.
+4. Connector-specific `env` values from the MCP definition, for keys not already present.
 
-Values can reference earlier environment variables with `${NAME}` and can use `op://` references. Bridgeport resolves `op://` values with the 1Password CLI (`op read`) at connector start.
+Values can reference earlier user-owned environment variables with `${NAME}` and can use `op://` references. Bridgeport resolves `op://` values with the 1Password CLI (`op read`) at connector start, but only for variables the connector declares or references. Unused `op://` entries are not resolved or injected into unrelated connector processes, and each 1Password CLI read has a timeout so a locked vault cannot stall connector startup indefinitely.
 
 The 1Password settings pane stores metadata for the Environment plus the local mounted `.env` path. It does not create or mutate a 1Password Environment itself.
 
@@ -253,6 +276,24 @@ Runtime status:
 GET /status
 Authorization: Bearer <token>
 ```
+
+OAuth discovery for Claude-style custom connectors:
+
+```http
+GET /.well-known/oauth-protected-resource/mcp/<connector>
+GET /.well-known/oauth-authorization-server
+POST /oauth/register
+GET /oauth/authorize
+POST /oauth/token
+```
+
+Connector icon assets:
+
+```http
+GET /icons/<connector>
+```
+
+Bridgeport advertises icon metadata in MCP `initialize` responses with `serverInfo.icons` and `serverInfo.iconUrl`. Mistral exports and initialize icon URLs include a deterministic `?v=` cache key so cloud providers refresh stale connector-card artwork after local assets change.
 
 ## Cloudflare
 

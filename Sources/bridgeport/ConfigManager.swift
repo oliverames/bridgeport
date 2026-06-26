@@ -97,9 +97,38 @@ public struct AnthropicMessagesAPIMCPServer: Codable, Sendable {
 public struct MistralCustomConnectorExport: Codable, Sendable {
     public let name: String
     public let serverURL: String
+    public let iconURL: String
     public let description: String
+    public let visibility: String
     public let authenticationMethod: String
     public let authorizationHeader: String
+    public let apiCreatePayload: MistralConnectorCreatePayload
+}
+
+public struct MistralConnectorCreatePayload: Codable, Sendable {
+    public let name: String
+    public let description: String
+    public let server: String
+    public let visibility: String
+    public let iconURL: String
+    public let headers: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case description
+        case server
+        case visibility
+        case iconURL = "icon_url"
+        case headers
+    }
+}
+
+public struct ChatGPTCustomAppExport: Codable, Sendable {
+    public let name: String
+    public let mcpServerURL: String
+    public let readyForChatGPT: Bool
+    public let authentication: String
+    public let note: String
 }
 
 public struct VibeCodeMCPServerExport: Codable, Sendable {
@@ -115,6 +144,7 @@ public struct CloudConnectorExport: Codable, Sendable {
     public let publicBaseURL: String
     public let queryTokenFallbackEnabled: Bool
     public let claudeCustomConnectors: [ClaudeCustomConnectorExport]
+    public let chatGPTCustomApps: [ChatGPTCustomAppExport]
     public let anthropicMessagesAPIMCPServers: [AnthropicMessagesAPIMCPServer]
     public let mistralCustomConnectors: [MistralCustomConnectorExport]
     public let vibeCodeMCPServers: [VibeCodeMCPServerExport]
@@ -217,6 +247,7 @@ public actor ConfigManager {
     private let configURL: URL
     private let clientConfigURL: URL
     private let cloudConnectorConfigURL: URL
+    private var lastLoadFailedToDecodeExistingConfig = false
 
     public init(
         configURL: URL = BridgeportPaths.configURL(),
@@ -231,6 +262,7 @@ public actor ConfigManager {
     public func load() -> BridgeportConfig {
         let fileManager = FileManager.default
         if !fileManager.fileExists(atPath: configURL.path) {
+            lastLoadFailedToDecodeExistingConfig = false
             let config = Self.defaultConfig()
             save(config)
             return config
@@ -301,13 +333,17 @@ public actor ConfigManager {
                 save(config)
             }
 
+            lastLoadFailedToDecodeExistingConfig = false
             return config
         } catch {
-            logMessage("ConfigManager.load: Failed to decode config, generating default: \(error)")
-            let config = Self.defaultConfig()
-            save(config)
-            return config
+            lastLoadFailedToDecodeExistingConfig = true
+            logMessage("ConfigManager.load: Failed to decode config, using in-memory defaults without overwriting existing file: \(error)")
+            return Self.defaultConfig()
         }
+    }
+
+    public func loadedExistingConfigFailedToDecode() -> Bool {
+        lastLoadFailedToDecodeExistingConfig
     }
 
     public func save(_ config: BridgeportConfig) {
@@ -393,7 +429,6 @@ public actor ConfigManager {
 
     public static func cloudConnectorExport(config: BridgeportConfig, connectors: [Connector], generatedAt: Date = Date()) -> CloudConnectorExport {
         let publicConnectors = publicConnectors(config: config, connectors: connectors)
-        let token = config.token ?? ""
         let queryTokenFallbackEnabled = config.allowQueryTokenAuth == true
 
         return CloudConnectorExport(
@@ -405,17 +440,14 @@ public actor ConfigManager {
                 let routePath = config.publicRoutePath(for: connector)
                 return ClaudeCustomConnectorExport(
                     name: connector.name,
-                    remoteMCPServerURL: mcpEndpointURL(
-                        baseURL: baseURL,
-                        routePath: routePath,
-                        queryToken: queryTokenFallbackEnabled ? token : nil
-                    ),
-                    readyForClaudeApp: queryTokenFallbackEnabled,
-                    authentication: queryTokenFallbackEnabled ? "Query token in URL" : "Requires OAuth support or query-token fallback",
-                    note: queryTokenFallbackEnabled
-                        ? "Paste this URL into Claude's Add custom connector dialog."
-                        : "Claude's app connector dialog has no static Authorization header field. Enable query-token fallback or add OAuth support before using this URL in Claude."
+                    remoteMCPServerURL: mcpEndpointURL(baseURL: baseURL, routePath: routePath),
+                    readyForClaudeApp: true,
+                    authentication: "OAuth 2.1 authorization code with PKCE",
+                    note: "Paste this URL into Claude's Add custom connector dialog. Claude will register through Bridgeport's OAuth discovery endpoints and open a Bridgeport approval page."
                 )
+            },
+            chatGPTCustomApps: publicConnectors.map { connector in
+                chatGPTCustomApp(config: config, connector: connector)
             },
             anthropicMessagesAPIMCPServers: publicConnectors.map { connector in
                 anthropicMessagesAPIServer(config: config, connector: connector)
@@ -428,9 +460,12 @@ public actor ConfigManager {
             },
             notes: [
                 "Claude app custom connectors are reached from Anthropic's cloud and need a public URL.",
+                "Claude app custom connectors use Bridgeport's OAuth discovery, dynamic client registration, and PKCE authorization-code flow.",
+                "ChatGPT custom apps use remote MCP server URLs. OAuth is the production path; query-token fallback is for local/private compatibility testing only.",
                 "Anthropic Messages API MCP connector definitions can use authorization_token, so they do not need query-token fallback.",
-                "Mistral Work custom connectors auto-detect Bearer authentication when Bridgeport returns WWW-Authenticate: Bearer.",
-                "Vibe Code CLI supports streamable-http MCP servers with Authorization headers in config.toml."
+                "Mistral Work/Vibe custom connectors auto-detect Bearer authentication when Bridgeport returns WWW-Authenticate: Bearer.",
+                "Vibe Code CLI supports streamable-http MCP servers with Authorization headers in config.toml.",
+                "Bridgeport advertises connector icons in MCP initialize responses and serves them from /icons/<connector> with stable cache keys."
             ]
         )
     }
@@ -457,12 +492,51 @@ public actor ConfigManager {
 
     public static func mistralCustomConnector(config: BridgeportConfig, connector: Connector) -> MistralCustomConnectorExport {
         let baseURL = clientEndpointBaseURL(port: config.port ?? 8080, publicBaseURL: config.publicBaseURL)
+        let routePath = config.publicRoutePath(for: connector)
+        let serverURL = mcpEndpointURL(baseURL: baseURL, routePath: routePath)
+        let iconURL = iconEndpointURL(
+            baseURL: baseURL,
+            routePath: routePath,
+            cacheKey: connectorIconCacheKey(for: connector)
+        )
+        let description = "Bridgeport-hosted MCP connector for \(connector.name)."
+        let authorizationHeader = "Bearer \(config.token ?? "")"
+        let apiName = mistralSafeConnectorName("bridgeport_\(routePath)")
         return MistralCustomConnectorExport(
             name: connector.name,
-            serverURL: mcpEndpointURL(baseURL: baseURL, routePath: config.publicRoutePath(for: connector)),
-            description: "Bridgeport-hosted MCP connector for \(connector.name).",
+            serverURL: serverURL,
+            iconURL: iconURL,
+            description: description,
+            visibility: "private",
             authenticationMethod: "HTTP Bearer Token",
-            authorizationHeader: "Bearer \(config.token ?? "")"
+            authorizationHeader: authorizationHeader,
+            apiCreatePayload: MistralConnectorCreatePayload(
+                name: apiName,
+                description: description,
+                server: serverURL,
+                visibility: "private",
+                iconURL: iconURL,
+                headers: ["Authorization": authorizationHeader]
+            )
+        )
+    }
+
+    public static func chatGPTCustomApp(config: BridgeportConfig, connector: Connector) -> ChatGPTCustomAppExport {
+        let baseURL = clientEndpointBaseURL(port: config.port ?? 8080, publicBaseURL: config.publicBaseURL)
+        let routePath = config.publicRoutePath(for: connector)
+        let queryTokenFallbackEnabled = config.allowQueryTokenAuth == true
+        return ChatGPTCustomAppExport(
+            name: connector.name,
+            mcpServerURL: mcpEndpointURL(
+                baseURL: baseURL,
+                routePath: routePath,
+                queryToken: queryTokenFallbackEnabled ? config.token : nil
+            ),
+            readyForChatGPT: queryTokenFallbackEnabled,
+            authentication: queryTokenFallbackEnabled ? "Query token in URL" : "Requires OAuth support or query-token fallback",
+            note: queryTokenFallbackEnabled
+                ? "Use this MCP server URL for ChatGPT custom app testing behind your Cloudflare public hostname."
+                : "ChatGPT custom apps should use OAuth for production. Bridgeport now exposes OAuth discovery endpoints for public MCP URLs."
         )
     }
 
@@ -533,6 +607,21 @@ public actor ConfigManager {
         "\(baseURL)/mcp/\(normalizedRoutePath(routePath))"
     }
 
+    public static func iconEndpointURL(baseURL: String, routePath: String) -> String {
+        "\(baseURL)/icons/\(normalizedRoutePath(routePath))"
+    }
+
+    public static func iconEndpointURL(baseURL: String, routePath: String, cacheKey: String?) -> String {
+        let endpoint = iconEndpointURL(baseURL: baseURL, routePath: routePath)
+        guard let cacheKey,
+              !cacheKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              var components = URLComponents(string: endpoint) else {
+            return endpoint
+        }
+        components.queryItems = [URLQueryItem(name: "v", value: cacheKey)]
+        return components.url?.absoluteString ?? endpoint
+    }
+
     public static func mcpEndpointURL(baseURL: String, routePath: String, queryToken: String?) -> String {
         let endpoint = mcpEndpointURL(baseURL: baseURL, routePath: routePath)
         guard let queryToken, !queryToken.isEmpty else { return endpoint }
@@ -541,6 +630,63 @@ public actor ConfigManager {
         queryItems.append(URLQueryItem(name: "token", value: queryToken))
         components.queryItems = queryItems
         return components.url?.absoluteString ?? "\(endpoint)?token=\(queryToken)"
+    }
+
+    public static func mistralSafeConnectorName(_ name: String) -> String {
+        let characters = name.unicodeScalars.map { scalar -> Character in
+            let isASCIIDigit = scalar.value >= 48 && scalar.value <= 57
+            let isASCIIUppercase = scalar.value >= 65 && scalar.value <= 90
+            let isASCIILowercase = scalar.value >= 97 && scalar.value <= 122
+            if isASCIIDigit || isASCIIUppercase || isASCIILowercase || scalar == "_" || scalar == "-" {
+                return Character(scalar)
+            }
+            return "_"
+        }
+        let normalized = String(characters).trimmingCharacters(in: CharacterSet(charactersIn: "_-"))
+        let fallback = normalized.isEmpty ? "bridgeport_connector" : normalized
+        return String(fallback.prefix(64))
+    }
+
+    private static func connectorIconCacheKey(for connector: Connector) -> String? {
+        let directoryURL = URL(fileURLWithPath: connector.directoryPath)
+        let candidates = [
+            directoryURL.appendingPathComponent("assets/icon.png"),
+            directoryURL.appendingPathComponent("assets/icon.svg"),
+            directoryURL.appendingPathComponent("images/icon.png"),
+            directoryURL.appendingPathComponent("images/icon.svg"),
+            directoryURL.appendingPathComponent("public/icon.png"),
+            directoryURL.appendingPathComponent("public/icon.svg"),
+            directoryURL.appendingPathComponent("codex/assets/icon.png"),
+            directoryURL.appendingPathComponent("codex/assets/icon.svg"),
+            directoryURL.appendingPathComponent(".claude-plugin/icon.png"),
+            directoryURL.appendingPathComponent(".claude-plugin/icon.svg"),
+            directoryURL.appendingPathComponent(".claude-plugin/assets/icon.png"),
+            directoryURL.appendingPathComponent(".claude-plugin/assets/icon.svg"),
+            directoryURL.appendingPathComponent(".codex-plugin/icon.png"),
+            directoryURL.appendingPathComponent(".codex-plugin/icon.svg"),
+            directoryURL.appendingPathComponent(".codex-plugin/assets/icon.png"),
+            directoryURL.appendingPathComponent(".codex-plugin/assets/icon.svg"),
+            directoryURL.appendingPathComponent(".github/plugin/icon.png"),
+            directoryURL.appendingPathComponent(".github/plugin/icon.svg"),
+            directoryURL.appendingPathComponent(".github/plugin/assets/icon.png"),
+            directoryURL.appendingPathComponent(".github/plugin/assets/icon.svg")
+        ]
+
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+            guard ["png", "svg"].contains(candidate.pathExtension.lowercased()) else { continue }
+            return iconFileCacheKey(candidate)
+        }
+
+        return nil
+    }
+
+    private static func iconFileCacheKey(_ fileURL: URL) -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path) else {
+            return nil
+        }
+        let size = (attrs[.size] as? NSNumber)?.intValue ?? 0
+        let modified = Int((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+        return "\(max(size, 0))-\(max(modified, 0))"
     }
 
     private static func tomlEscaped(_ value: String) -> String {

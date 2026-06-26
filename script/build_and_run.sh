@@ -12,8 +12,10 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$BINARY_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+APP_ICON="$ROOT_DIR/Resources/AppIcon.icns"
 
 # Stop only the app bundle assembled by this script. Do not stop an installed
 # LaunchAgent daemon that may be serving real connector sessions.
@@ -31,9 +33,12 @@ BUILD_BINARY="$(swift build --show-bin-path)/$BINARY_NAME"
 
 # Assemble the App Bundle
 rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_MACOS"
+mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+if [ -f "$APP_ICON" ]; then
+  cp "$APP_ICON" "$APP_RESOURCES/AppIcon.icns"
+fi
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -46,6 +51,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>LSMinimumSystemVersion</key>
@@ -79,7 +86,7 @@ case "$MODE" in
   --verify|verify)
     open_app
     sleep 1
-    pgrep -f "$BINARY_NAME" >/dev/null
+    pgrep -f "$APP_BINARY" >/dev/null
     ;;
   *)
     echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2

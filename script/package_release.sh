@@ -16,6 +16,7 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$BINARY_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 DMG_PATH="$RELEASE_DIR/$APP_NAME-$VERSION.dmg"
+APP_ICON="$ROOT_DIR/Resources/AppIcon.icns"
 
 find_signing_identity() {
   if [ -n "${BRIDGEPORT_SIGN_IDENTITY:-}" ]; then
@@ -41,6 +42,9 @@ swift build -c release
 BUILD_BINARY="$(swift build -c release --show-bin-path)/$BINARY_NAME"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+if [ -f "$APP_ICON" ]; then
+  cp "$APP_ICON" "$APP_RESOURCES/AppIcon.icns"
+fi
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -55,6 +59,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleShortVersionString</key>
   <string>$VERSION</string>
   <key>CFBundleVersion</key>
