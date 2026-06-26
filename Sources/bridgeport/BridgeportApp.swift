@@ -15,7 +15,7 @@ struct BridgeportApp: App {
     @Environment(\.openSettings) private var openSettings
 
     var body: some Scene {
-        MenuBarExtra("Bridgeport", systemImage: appState.isDaemonRunning ? "app.connected.to.app.below.fill" : "app.connected.to.app.below") {
+        MenuBarExtra("Bridgeport", systemImage: menuBarSymbol) {
             Text("Bridgeport")
                 .font(.headline)
 
@@ -89,5 +89,16 @@ struct BridgeportApp: App {
     private func openSettingsWindow() {
         openSettings()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private var menuBarSymbol: String {
+        let preferred = appState.isDaemonRunning
+            ? "app.connected.to.app.below.fill"
+            : "app.connected.to.app.below"
+        let fallback = appState.isDaemonRunning
+            ? "bolt.fill"
+            : "bolt"
+
+        return NSImage(systemSymbolName: preferred, accessibilityDescription: nil) == nil ? fallback : preferred
     }
 }
