@@ -27,18 +27,21 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Bindable var appState: AppState
-    @State private var selection: SettingsPane? = .dashboard
+    @State private var selection: SettingsPane = .dashboard
+    @State private var connectorSearchText = ""
 
     var body: some View {
         NavigationSplitView {
             List(SettingsPane.allCases, selection: $selection) { pane in
                 Label(pane.rawValue, systemImage: pane.icon)
+                    .tag(pane)
             }
-            .navigationSplitViewColumnWidth(180)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 220)
+            .listStyle(.sidebar)
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    switch selection ?? .dashboard {
+                    switch selection {
                     case .dashboard:
                         dashboardPane
                     case .connectors:
@@ -59,19 +62,50 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(.background)
+            .settingsScrollEdgeTreatment()
+            .navigationTitle(selection.rawValue)
         }
-        .frame(width: 980, height: 680)
+        .navigationSplitViewStyle(.prominentDetail)
+        .settingsToolbarMaterial()
+        .frame(minWidth: 760, idealWidth: 980, minHeight: 520, idealHeight: 680)
+    }
+
+    private var filteredConnectors: [Connector] {
+        let query = connectorSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return appState.discoveredConnectors }
+        return appState.discoveredConnectors.filter { connector in
+            connector.name.localizedCaseInsensitiveContains(query) ||
+            connector.configPath.localizedCaseInsensitiveContains(query)
+        }
     }
 
     private var dashboardPane: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             PaneHeader(title: "Bridgeport", subtitle: "Personal MCP gateway for local Mac connectors and self-hosted tools.")
 
-            HStack(spacing: 12) {
-                MetricView(title: "Daemon", value: appState.isDaemonRunning ? "Running" : "Stopped", systemImage: appState.isDaemonRunning ? "checkmark.circle.fill" : "stop.circle")
-                MetricView(title: "Enabled", value: "\(appState.enabledConnectorCount)/\(appState.discoveredConnectors.count)", systemImage: "switch.2")
-                MetricView(title: "Active Sessions", value: "\(appState.activeSessionCount)", systemImage: "dot.radiowaves.left.and.right")
-                MetricView(title: "Public", value: "\(appState.publicConnectorCount)", systemImage: "globe")
+            SettingsGroup(title: "Status") {
+                LabeledContent("Daemon") {
+                    StatusValue(
+                        text: appState.isDaemonRunning ? "Running" : "Stopped",
+                        systemImage: appState.isDaemonRunning ? "checkmark.circle.fill" : "stop.circle",
+                        tint: appState.isDaemonRunning ? .green : .secondary
+                    )
+                }
+                Divider()
+                LabeledContent("Enabled Connectors") {
+                    Text("\(appState.enabledConnectorCount) of \(appState.discoveredConnectors.count)")
+                        .foregroundStyle(.secondary)
+                }
+                Divider()
+                LabeledContent("Active Sessions") {
+                    Text("\(appState.activeSessionCount)")
+                        .foregroundStyle(.secondary)
+                }
+                Divider()
+                LabeledContent("Public Connectors") {
+                    Text("\(appState.publicConnectorCount)")
+                        .foregroundStyle(.secondary)
+                }
             }
 
             HStack(spacing: 10) {
@@ -111,11 +145,7 @@ struct SettingsView: View {
                 }
             }
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Endpoints")
-                    .font(.headline)
+            SettingsGroup(title: "Endpoints") {
                 LabeledContent("Local") {
                     Text("\(appState.localBaseURL)/mcp/<connector>")
                         .font(.system(.body, design: .monospaced))
@@ -140,72 +170,80 @@ struct SettingsView: View {
             PaneHeader(title: "Connectors", subtitle: "Enable local MCP servers, expose selected endpoints, and fill required environment values.")
 
             if appState.discoveredConnectors.isEmpty {
-                ContentUnavailableView("No Connectors", systemImage: "cable.connector.slash", description: Text("Import MCPs or mirror a source to discover local connectors."))
+                ContentUnavailableView {
+                    Label("No Connectors", systemImage: "cable.connector.slash")
+                } description: {
+                    Text("Import MCP definitions or mirror Claude Code and Codex to discover local connectors.")
+                } actions: {
+                    Button("Open Sources") {
+                        selection = .sources
+                    }
+                }
+            } else if filteredConnectors.isEmpty {
+                ContentUnavailableView("No Matches", systemImage: "magnifyingglass", description: Text("No connectors match the current search."))
             } else {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(appState.discoveredConnectors, id: \.name) { connector in
+                    ForEach(filteredConnectors, id: \.name) { connector in
                         ConnectorRow(appState: appState, connector: connector)
                     }
                 }
             }
         }
+        .searchable(text: $connectorSearchText, placement: .toolbar, prompt: "Find connector")
     }
 
     private var securityPane: some View {
         VStack(alignment: .leading, spacing: 18) {
             PaneHeader(title: "Security", subtitle: "Bridgeport uses bearer-token authentication for local and tunneled MCP traffic.")
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Master API Token")
-                    .font(.headline)
+            SettingsGroup(title: "Master API Token") {
+                LabeledContent("Token") {
+                    HStack(spacing: 8) {
+                        Text(appState.isShowingToken ? appState.token : String(repeating: "•", count: 28))
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 8) {
-                    Text(appState.isShowingToken ? appState.token : String(repeating: "•", count: 28))
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 10)
-                        .frame(height: 32)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                        Button(appState.isShowingToken ? "Hide" : "Show") {
+                            appState.isShowingToken.toggle()
+                        }
 
-                    Button(appState.isShowingToken ? "Hide" : "Show") {
-                        appState.isShowingToken.toggle()
-                    }
-
-                    Button {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(appState.token, forType: .string)
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
+                        Button {
+                            let pasteboard = NSPasteboard.general
+                            pasteboard.clearContents()
+                            pasteboard.setString(appState.token, forType: .string)
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
                     }
                 }
-
-                HStack {
-                    Button {
-                        Task {
-                            await appState.rotateToken()
-                        }
-                    } label: {
-                        Label("Rotate Token", systemImage: "key.horizontal")
+                Divider()
+                Button {
+                    Task {
+                        await appState.rotateToken()
                     }
-
-                    Toggle("Allow query-string token fallback", isOn: $appState.allowQueryTokenAuth)
-                        .onChange(of: appState.allowQueryTokenAuth) {
-                            Task { await appState.save() }
-                        }
+                } label: {
+                    Label("Rotate Token", systemImage: "key.horizontal")
                 }
-
-                Text("Header auth is preferred. Query-string fallback is only for legacy MCP clients that cannot send Authorization headers.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
-            Divider()
+            SettingsGroup(title: "Authentication") {
+                Toggle(isOn: $appState.allowQueryTokenAuth) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Query-String Token Fallback")
+                        Text("Use only for legacy MCP clients that cannot send Authorization headers.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onChange(of: appState.allowQueryTokenAuth) {
+                    Task { await appState.save() }
+                }
+            }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Allowed Origins")
-                    .font(.headline)
+            SettingsGroup(title: "Allowed Origins") {
                 TextEditor(text: $appState.allowedOriginsText)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 100)
@@ -223,35 +261,35 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             PaneHeader(title: "Cloudflare", subtitle: "Use Cloudflare Tunnel to route a private hostname to Bridgeport on this Mac.")
 
-            SettingsField(label: "Public Base URL") {
-                TextField("https://mcp.amesvt.com", text: $appState.publicBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { Task { await appState.save() } }
-            }
-
-            SettingsField(label: "Bind Host") {
-                TextField("127.0.0.1", text: $appState.bindHost)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { Task { await appState.save() } }
-            }
-
-            HStack {
-                Button {
-                    Task { await appState.save() }
-                } label: {
-                    Label("Save Cloudflare Settings", systemImage: "checkmark.circle")
+            SettingsGroup(title: "Tunnel") {
+                SettingsField(label: "Public Base URL") {
+                    TextField("https://mcp.amesvt.com", text: $appState.publicBaseURL)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save() } }
                 }
 
-                Button {
-                    openCloudflareDocs()
-                } label: {
-                    Label("Open Tunnel Docs", systemImage: "safari")
+                SettingsField(label: "Bind Host") {
+                    TextField("127.0.0.1", text: $appState.bindHost)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save() } }
+                }
+
+                HStack {
+                    Button {
+                        Task { await appState.save() }
+                    } label: {
+                        Label("Save Cloudflare Settings", systemImage: "checkmark.circle")
+                    }
+
+                    Button {
+                        openCloudflareDocs()
+                    } label: {
+                        Label("Open Tunnel Docs", systemImage: "safari")
+                    }
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Tunnel target")
-                    .font(.headline)
+            SettingsGroup(title: "Routing") {
                 Text("cloudflared should forward the chosen hostname to \(appState.localBaseURL). Expose individual connectors only after enabling their Public toggle.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -314,47 +352,58 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             PaneHeader(title: "1Password Environment", subtitle: "Resolve connector credentials from a mounted 1Password local .env file plus op:// references.")
 
-            Toggle("Use mounted 1Password Environment .env file", isOn: $appState.onePasswordEnvironment.enabled)
+            SettingsGroup(title: "Environment") {
+                Toggle(isOn: $appState.onePasswordEnvironment.enabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Mounted Local .env File")
+                        Text("Use a local 1Password Environment file for connector secrets.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 .onChange(of: appState.onePasswordEnvironment.enabled) {
                     Task { await appState.save() }
                 }
 
-            SettingsField(label: "Environment Name") {
-                TextField("Bridgeport", text: $appState.onePasswordEnvironment.environmentName)
-                    .textFieldStyle(.roundedBorder)
-            }
+                Divider()
 
-            SettingsField(label: "Account ID") {
-                TextField("1Password account UUID", text: $appState.onePasswordEnvironment.accountId)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            SettingsField(label: "Environment ID") {
-                TextField("Environment UUID", text: $appState.onePasswordEnvironment.environmentId)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            SettingsField(label: "Local .env Path") {
-                HStack {
-                    TextField("~/.config/bridgeport/1password.env", text: $appState.onePasswordEnvironment.localEnvFilePath)
+                SettingsField(label: "Environment") {
+                    TextField("Bridgeport", text: $appState.onePasswordEnvironment.environmentName)
                         .textFieldStyle(.roundedBorder)
-                    Button("Browse...") {
-                        selectOnePasswordEnvFile()
+                }
+
+                SettingsField(label: "Account ID") {
+                    TextField("1Password account UUID", text: $appState.onePasswordEnvironment.accountId)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                SettingsField(label: "Environment ID") {
+                    TextField("Environment UUID", text: $appState.onePasswordEnvironment.environmentId)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                SettingsField(label: "Local .env") {
+                    HStack {
+                        TextField("~/.config/bridgeport/1password.env", text: $appState.onePasswordEnvironment.localEnvFilePath)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Browse...") {
+                            selectOnePasswordEnvFile()
+                        }
                     }
                 }
-            }
 
-            HStack {
-                Button {
-                    Task { await appState.save() }
-                } label: {
-                    Label("Save 1Password Settings", systemImage: "checkmark.circle")
-                }
+                HStack {
+                    Button {
+                        Task { await appState.save() }
+                    } label: {
+                        Label("Save 1Password Settings", systemImage: "checkmark.circle")
+                    }
 
-                Button {
-                    NSWorkspace.shared.open(URL(string: "onepassword://settings/labs")!)
-                } label: {
-                    Label("Open 1Password Labs", systemImage: "key")
+                    Button {
+                        NSWorkspace.shared.open(URL(string: "onepassword://settings/labs")!)
+                    } label: {
+                        Label("Open 1Password Labs", systemImage: "key")
+                    }
                 }
             }
         }
@@ -364,66 +413,76 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             PaneHeader(title: "Sources", subtitle: "Import copies MCP definitions into Bridgeport. Mirror keeps reading the external source live.")
 
-            HStack {
+            SettingsGroup(title: "Quick Add") {
+                HStack {
+                    Button {
+                        Task { await appState.mirrorDefaultClaudeCodeMCPs() }
+                    } label: {
+                        Label("Include Claude Code", systemImage: "sparkles.rectangle.stack")
+                    }
+
+                    Button {
+                        Task { await appState.mirrorDefaultCodexMCPs() }
+                    } label: {
+                        Label("Include Codex", systemImage: "terminal")
+                    }
+                }
+            }
+
+            SettingsGroup(title: "Primary Source") {
+                SettingsField(label: "Path") {
+                    HStack {
+                        TextField("Path to MCP plugin directory", text: $appState.connectorsPath)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Browse...") {
+                            selectPrimarySource()
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup(title: "Mirrored Sources") {
+                HStack {
+                    Button {
+                        mirrorMCPs()
+                    } label: {
+                        Label("Mirror MCPs From...", systemImage: "arrow.triangle.2.circlepath")
+                    }
+
+                    Button {
+                        Task {
+                            await appState.save()
+                            await appState.reload()
+                        }
+                    } label: {
+                        Label("Apply Sources", systemImage: "checkmark.circle")
+                    }
+                }
+
+                if appState.mirroredSourcePaths.isEmpty {
+                    Text("No mirrored sources yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(appState.mirroredSourcePaths, id: \.self) { path in
+                        SourcePathRow(path: path) {
+                            Task { await appState.removeMirroredPath(path) }
+                        }
+                    }
+                }
+
+                TextEditor(text: $appState.additionalConnectorPathsText)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 110)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+            }
+
+            SettingsGroup(title: "Imported Connectors") {
                 Button {
                     importMCPs()
                 } label: {
                     Label("Import MCPs", systemImage: "square.and.arrow.down")
                 }
 
-                Button {
-                    mirrorMCPs()
-                } label: {
-                    Label("Mirror MCPs From...", systemImage: "arrow.triangle.2.circlepath")
-                }
-
-                Button {
-                    Task { await appState.mirrorDefaultClaudeCodeMCPs() }
-                } label: {
-                    Label("Include Claude Code", systemImage: "sparkles.rectangle.stack")
-                }
-
-                Button {
-                    Task { await appState.mirrorDefaultCodexMCPs() }
-                } label: {
-                    Label("Include Codex", systemImage: "terminal")
-                }
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Primary Source")
-                    .font(.headline)
-                HStack {
-                    TextField("Path to MCP plugin directory", text: $appState.connectorsPath)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Browse...") {
-                        selectPrimarySource()
-                    }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Mirrored Sources")
-                    .font(.headline)
-                TextEditor(text: $appState.additionalConnectorPathsText)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 110)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
-                Button {
-                    Task {
-                        await appState.save()
-                        await appState.reload()
-                    }
-                } label: {
-                    Label("Apply Sources", systemImage: "checkmark.circle")
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Imported Connectors")
-                    .font(.headline)
                 if appState.importedConnectors.isEmpty {
                     Text("No Bridgeport-owned connector definitions yet.")
                         .foregroundStyle(.secondary)
@@ -519,32 +578,11 @@ private struct PaneHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.largeTitle.weight(.semibold))
+                .font(.title.weight(.semibold))
             Text(subtitle)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-}
-
-private struct MetricView: View {
-    let title: String
-    let value: String
-    let systemImage: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: systemImage)
-                .foregroundStyle(.tint)
-            Text(value)
-                .font(.title2.weight(.semibold))
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -562,27 +600,85 @@ private struct SettingsField<Content: View>: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func settingsToolbarMaterial() -> some View {
+        if #available(macOS 15.0, *) {
+            self
+                .toolbarBackground(.bar, for: .windowToolbar)
+                .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+        } else {
+            self
+                .toolbarBackground(.bar, for: .windowToolbar)
+                .toolbarBackground(.visible, for: .windowToolbar)
+        }
+    }
+
+    @ViewBuilder
+    func settingsScrollEdgeTreatment() -> some View {
+        if #available(macOS 26.0, *) {
+            self.scrollEdgeEffectStyle(.soft, for: .top)
+        } else {
+            self
+        }
+    }
+}
+
+private struct SettingsGroup<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            VStack(alignment: .leading, spacing: 10) {
+                content
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+private struct StatusValue: View {
+    let text: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        Label(text, systemImage: systemImage)
+            .foregroundStyle(tint)
+    }
+}
+
 private struct ConnectorRow: View {
     @Bindable var appState: AppState
     let connector: Connector
 
     var body: some View {
+        let settings = appState.connectorSettings(for: connector.name)
+        let activeCount = appState.activeSessions(for: connector)
+        let isPublic = settings.exposePublicly
+
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
-                Circle()
-                    .fill(appState.activeSessions(for: connector) > 0 ? Color.green : Color.secondary.opacity(0.35))
-                    .frame(width: 9, height: 9)
+                StatusDot(isActive: activeCount > 0)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(connector.name)
                         .font(.headline)
-                    Text("\(connector.sourceKind.rawValue) • \(connector.configPath)")
+                        .lineLimit(1)
+                    Text(connector.configPath)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
                 Spacer()
+
+                StatusPill(text: connector.sourceKind.rawValue.capitalized, systemImage: connector.sourceKind == .imported ? "square.and.arrow.down" : "arrow.triangle.2.circlepath")
+                StatusPill(text: activeCount == 1 ? "1 session" : "\(activeCount) sessions", systemImage: "dot.radiowaves.left.and.right")
 
                 Toggle("Enabled", isOn: Binding(
                     get: { appState.connectorSettings(for: connector.name).enabled },
@@ -597,7 +693,10 @@ private struct ConnectorRow: View {
                     set: { _ in Task { await appState.togglePublicExposure(connector.name) } }
                 ))
 
-                TextField("Public path", text: Binding(
+                Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                    .foregroundStyle(.secondary)
+
+                TextField(connector.name, text: Binding(
                     get: { appState.connectorSettings(for: connector.name).publicPath ?? connector.name },
                     set: { newValue in
                         var settings = appState.connectorSettings(for: connector.name)
@@ -607,14 +706,12 @@ private struct ConnectorRow: View {
                 ))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 180)
+                .disabled(!isPublic)
                 .onSubmit {
                     Task {
                         await appState.setPublicPath(appState.connectorSettings(for: connector.name).publicPath ?? connector.name, for: connector.name)
                     }
                 }
-
-                Text("Sessions: \(appState.activeSessions(for: connector))")
-                    .foregroundStyle(.secondary)
 
                 Spacer()
 
@@ -629,7 +726,7 @@ private struct ConnectorRow: View {
                 } label: {
                     Label("Copy Public", systemImage: "globe")
                 }
-                .disabled(appState.publicBaseURL.isEmpty)
+                .disabled(!isPublic || appState.publicBaseURL.isEmpty)
             }
 
             let requiredVars = connector.requiredEnvVarNames
@@ -686,6 +783,64 @@ private struct ConnectorRow: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
+    }
+}
+
+private struct SourcePathRow: View {
+    let path: String
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: sourceIcon)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            Text(path)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            Spacer()
+
+            Button(role: .destructive, action: remove) {
+                Label("Remove", systemImage: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var sourceIcon: String {
+        path.hasSuffix(".toml") || path.hasSuffix(".json") ? "doc.text" : "folder"
+    }
+}
+
+private struct StatusDot: View {
+    let isActive: Bool
+
+    var body: some View {
+        Circle()
+            .fill(isActive ? Color.green : Color.secondary.opacity(0.35))
+            .frame(width: 9, height: 9)
+            .accessibilityLabel(isActive ? "Active" : "Idle")
+    }
+}
+
+private struct StatusPill: View {
+    let text: String
+    let systemImage: String
+
+    var body: some View {
+        Label(text, systemImage: systemImage)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary.opacity(0.35), in: Capsule())
     }
 }
 

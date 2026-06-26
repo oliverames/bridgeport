@@ -41,6 +41,10 @@ public final class AppState {
         ConfigManager.publicConnectors(config: currentConfig(), connectors: discoveredConnectors)
     }
 
+    public var mirroredSourcePaths: [String] {
+        additionalConnectorPaths
+    }
+
     public var localBaseURL: String {
         "http://localhost:\(port)"
     }

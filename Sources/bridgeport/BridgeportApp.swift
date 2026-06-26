@@ -6,27 +6,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, Sendable {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run as an accessory app (menu bar only, no Dock icon)
         NSApp.setActivationPolicy(.accessory)
+        SettingsWindowCoordinator.shared.installAppMenuItem()
     }
 }
 
 struct BridgeportApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var appState = AppState()
-    @Environment(\.openSettings) private var openSettings
+    @State private var appState: AppState
+
+    init() {
+        let appState = AppState()
+        _appState = State(initialValue: appState)
+        SettingsWindowCoordinator.shared.configure(appState: appState)
+    }
 
     var body: some Scene {
         MenuBarExtra("Bridgeport", systemImage: menuBarSymbol) {
-            Text("Bridgeport")
+            Label("Bridgeport", systemImage: menuBarSymbol)
                 .font(.headline)
 
             let totalCount = appState.discoveredConnectors.count
-            Text("\(appState.enabledConnectorCount)/\(totalCount) enabled, \(appState.activeSessionCount) active")
+            Text(menuSummary(totalCount: totalCount))
                 .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            Button("Open Settings") {
+                openSettingsWindow()
+            }
+            .keyboardShortcut(",", modifiers: .command)
+
+            Button("Refresh") {
+                Task {
+                    appState.checkDaemonStatus()
+                    await appState.refreshDaemonRuntimeStatus()
+                }
+            }
+
+            Button(appState.isDaemonRunning ? "Restart Daemon" : "Start Daemon") {
+                Task {
+                    if appState.isDaemonRunning {
+                        await appState.restartDaemon()
+                    } else {
+                        await appState.installDaemon()
+                    }
+                }
+            }
 
             Divider()
 
             if appState.discoveredConnectors.isEmpty {
-                Button("No Connectors Discovered (Configure Path...)") {
+                Button("Configure Sources") {
                     openSettingsWindow()
                 }
             } else {
@@ -40,38 +71,10 @@ struct BridgeportApp: App {
                             }
                         }
                     )) {
-                        Text(activeCount > 0 ? "\(connector.name) (\(activeCount))" : connector.name)
+                        Text(connectorMenuTitle(connector.name, activeCount: activeCount))
                     }
                 }
             }
-
-            Divider()
-
-            Button("Refresh Status") {
-                Task {
-                    appState.checkDaemonStatus()
-                    await appState.refreshDaemonRuntimeStatus()
-                }
-            }
-
-            Button {
-                Task {
-                    if appState.isDaemonRunning {
-                        await appState.restartDaemon()
-                    } else {
-                        await appState.installDaemon()
-                    }
-                }
-            } label: {
-                let status = appState.isDaemonRunning ? "● Running" : "○ Stopped"
-                let action = appState.isDaemonRunning ? "Click to Restart" : "Click to Start"
-                Text("Daemon: \(status), \(action)")
-            }
-
-            Button("Settings...") {
-                openSettingsWindow()
-            }
-            .keyboardShortcut(",", modifiers: .command)
 
             Divider()
 
@@ -82,13 +85,41 @@ struct BridgeportApp: App {
         }
 
         Settings {
-            SettingsView(appState: appState)
+            EmptyView()
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    openSettingsWindow()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 
     private func openSettingsWindow() {
-        openSettings()
-        NSApp.activate(ignoringOtherApps: true)
+        SettingsWindowCoordinator.shared.openSettingsWindow()
+    }
+
+    private func menuSummary(totalCount: Int) -> String {
+        let daemon = appState.isDaemonRunning ? "Running" : "Stopped"
+        return "\(daemon) - \(appState.enabledConnectorCount)/\(totalCount) enabled - \(appState.activeSessionCount) active"
+    }
+
+    private func connectorMenuTitle(_ name: String, activeCount: Int) -> String {
+        let suffix = activeCount > 0 ? " (\(activeCount))" : ""
+        return shortMenuTitle(name, suffix: suffix)
+    }
+
+    private func shortMenuTitle(_ value: String, suffix: String = "") -> String {
+        let maxLength = max(1, 30 - suffix.count)
+        if value.count <= maxLength {
+            return value + suffix
+        }
+        guard maxLength > 3 else {
+            return String(value.prefix(maxLength)) + suffix
+        }
+        return String(value.prefix(maxLength - 3)) + "..." + suffix
     }
 
     private var menuBarSymbol: String {
