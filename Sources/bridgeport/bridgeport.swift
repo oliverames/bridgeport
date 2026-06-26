@@ -179,35 +179,17 @@ struct bridgeport {
                     exit(1)
                 }
 
-                let plistContent = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-                <plist version="1.0">
-                <dict>
-                    <key>Label</key>
-                    <string>com.oliverames.bridgeport</string>
-                    <key>ProgramArguments</key>
-                    <array>
-                        <string>\(destURL.path)</string>
-                        <string>--server</string>
-                    </array>
-                    <key>KeepAlive</key>
-                    <true/>
-                    <key>RunAtLoad</key>
-                    <true/>
-                    <key>StandardOutPath</key>
-                    <string>\(configDirectory.path)/stdout.log</string>
-                    <key>StandardErrorPath</key>
-                    <string>\(configDirectory.path)/stderr.log</string>
-                </dict>
-                </plist>
-                """
-
                 do {
                     if !fileManager.fileExists(atPath: launchAgentsURL.path) {
                         try fileManager.createDirectory(at: launchAgentsURL, withIntermediateDirectories: true)
                     }
-                    try plistContent.write(to: plistURL, atomically: true, encoding: .utf8)
+                    let plistData = try LaunchAgentPlist.makeData(
+                        label: "com.oliverames.bridgeport",
+                        executablePath: destURL.path,
+                        stdoutPath: configDirectory.appendingPathComponent("stdout.log").path,
+                        stderrPath: configDirectory.appendingPathComponent("stderr.log").path
+                    )
+                    try plistData.write(to: plistURL, options: .atomic)
                     print("  Wrote plist to \(plistURL.path)")
                 } catch {
                     print("Error: Failed to write plist: \(error)")

@@ -27,7 +27,7 @@ public actor ProcessBridge {
         let proc = Process()
         proc.currentDirectoryURL = URL(fileURLWithPath: connector.directoryPath)
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = [connector.command] + connector.args
+        proc.arguments = Self.envLaunchArguments(for: connector)
         proc.environment = env
 
         let stdin = Pipe()
@@ -131,6 +131,10 @@ public actor ProcessBridge {
                 }
             }
         }
+    }
+
+    static func envLaunchArguments(for connector: Connector) -> [String] {
+        ["--", connector.command] + connector.args
     }
 
     private static func drainStderrLoop(pipe: Pipe) async {

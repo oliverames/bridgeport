@@ -122,12 +122,17 @@ public actor ConnectorManager {
         if includeImported {
             for (name, imported) in (config.importedConnectors ?? [:]).sorted(by: { $0.key < $1.key }) {
                 guard !seenNames.contains(name) else { continue }
+                let command = imported.command.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !command.isEmpty, Self.isLocalCommand(command) else {
+                    logMessage("ConnectorManager: Skipping imported MCP '\(name)' with non-local command")
+                    continue
+                }
                 seenNames.insert(name)
                 discovered.append(Connector(
                     name: name,
                     directoryPath: imported.directoryPath,
                     configPath: imported.configPath,
-                    command: imported.command,
+                    command: command,
                     args: imported.args,
                     env: imported.env,
                     importedFrom: imported.importedFrom,
@@ -236,7 +241,7 @@ public actor ConnectorManager {
 
                 guard let rawCommand = serverDict["command"] as? String else { continue }
                 let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !command.isEmpty, !Self.isWebURL(command) else {
+                guard !command.isEmpty, Self.isLocalCommand(command) else {
                     logMessage("ConnectorManager: Skipping MCP '\(serverName)' with non-local command")
                     continue
                 }
@@ -287,7 +292,7 @@ public actor ConnectorManager {
             }
 
             let command = serviceConfig.command.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !command.isEmpty, !Self.isWebURL(command) else {
+            guard !command.isEmpty, Self.isLocalCommand(command) else {
                 logMessage("ConnectorManager: Skipping Codex MCP '\(serverName)' with non-local command")
                 continue
             }
@@ -456,7 +461,7 @@ public actor ConnectorManager {
         var currentServer: String?
         var currentIsEnvTable = false
 
-        for rawLine in text.components(separatedBy: .newlines) {
+        for rawLine in logicalTOMLLines(text) {
             let line = stripTOMLComment(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty else { continue }
 
@@ -524,9 +529,94 @@ public actor ConnectorManager {
         }
     }
 
-    private static func isWebURL(_ value: String) -> Bool {
-        let lower = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return lower.hasPrefix("http://") || lower.hasPrefix("https://")
+    private static func isLocalCommand(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return !hasURLScheme(trimmed)
+    }
+
+    private static func hasURLScheme(_ value: String) -> Bool {
+        guard let schemeEnd = value.range(of: "://")?.lowerBound else { return false }
+        let scheme = value[..<schemeEnd]
+        guard let first = scheme.first, first.isLetter else { return false }
+        return scheme.allSatisfy { character in
+            character.isLetter || character.isNumber || character == "+" || character == "-" || character == "."
+        }
+    }
+
+    private static func logicalTOMLLines(_ text: String) -> [String] {
+        var lines: [String] = []
+        var current = ""
+        var squareDepth = 0
+        var braceDepth = 0
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = stripTOMLComment(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            if current.isEmpty {
+                current = line
+            } else {
+                current += " " + line
+            }
+
+            let delta = containerDepthDelta(in: line)
+            squareDepth += delta.square
+            braceDepth += delta.brace
+
+            if squareDepth <= 0, braceDepth <= 0 {
+                lines.append(current)
+                current.removeAll()
+                squareDepth = 0
+                braceDepth = 0
+            }
+        }
+
+        if !current.isEmpty {
+            lines.append(current)
+        }
+        return lines
+    }
+
+    private static func containerDepthDelta(in line: String) -> (square: Int, brace: Int) {
+        var square = 0
+        var brace = 0
+        var inSingleQuote = false
+        var inDoubleQuote = false
+        var isEscaped = false
+
+        for character in line {
+            if inDoubleQuote && isEscaped {
+                isEscaped = false
+                continue
+            }
+            if inDoubleQuote && character == "\\" {
+                isEscaped = true
+                continue
+            }
+            if character == "\"", !inSingleQuote {
+                inDoubleQuote.toggle()
+                continue
+            }
+            if character == "'", !inDoubleQuote {
+                inSingleQuote.toggle()
+                continue
+            }
+            guard !inSingleQuote, !inDoubleQuote else { continue }
+            switch character {
+            case "[":
+                square += 1
+            case "]":
+                square -= 1
+            case "{":
+                brace += 1
+            case "}":
+                brace -= 1
+            default:
+                continue
+            }
+        }
+        return (square, brace)
     }
 
     private static func stripTOMLComment(_ line: String) -> String {

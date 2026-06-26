@@ -210,6 +210,33 @@ def run_tests():
                 raise AssertionError("Status endpoint did not return connectors")
             log("PASS: Status endpoint returned connector runtime data")
 
+            log("Test 8: Disallowed Origin is rejected...")
+            bad_origin_req = request(
+                f"http://localhost:{port}/mcp/mock-echo",
+                json.dumps(payload).encode("utf-8"),
+            )
+            bad_origin_req.add_header("Origin", "https://evil.example")
+            try:
+                urllib.request.urlopen(bad_origin_req, timeout=10)
+                raise AssertionError("Expected disallowed Origin to be rejected")
+            except urllib.error.HTTPError as e:
+                if e.code != 403:
+                    raise
+                log("PASS: Disallowed Origin rejected")
+
+            log("Test 9: Oversized MCP request body is rejected...")
+            oversized_req = request(
+                f"http://localhost:{port}/mcp/mock-echo",
+                b"x" * (1024 * 1024 + 1),
+            )
+            try:
+                urllib.request.urlopen(oversized_req, timeout=10)
+                raise AssertionError("Expected oversized request to be rejected")
+            except urllib.error.HTTPError as e:
+                if e.code != 413:
+                    raise
+                log("PASS: Oversized MCP request rejected")
+
             config_path = os.path.join(config_home, "config.json")
             client_config_path = os.path.join(config_home, "mcp_config.json")
             cloud_config_path = os.path.join(config_home, "cloud_connectors.json")

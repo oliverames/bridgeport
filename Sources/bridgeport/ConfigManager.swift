@@ -311,18 +311,15 @@ public actor ConfigManager {
     }
 
     public func save(_ config: BridgeportConfig) {
-        let fileManager = FileManager.default
         let directoryURL = configURL.deletingLastPathComponent()
 
         do {
-            if !fileManager.fileExists(atPath: directoryURL.path) {
-                try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            }
+            try Self.ensurePrivateDirectory(directoryURL)
 
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(config)
-            try data.write(to: configURL, options: .atomic)
+            try Self.writePrivateData(data, to: configURL)
             logMessage("ConfigManager: Config saved successfully to \(configURL.path)")
         } catch {
             logMessage("ConfigManager.save: Failed to save config: \(error)")
@@ -369,11 +366,9 @@ public actor ConfigManager {
 
         do {
             let directoryURL = clientConfigURL.deletingLastPathComponent()
-            if !FileManager.default.fileExists(atPath: directoryURL.path) {
-                try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            }
+            try Self.ensurePrivateDirectory(directoryURL)
             let data = try JSONSerialization.data(withJSONObject: clientConfig, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: clientConfigURL, options: .atomic)
+            try Self.writePrivateData(data, to: clientConfigURL)
             logMessage("ConfigManager: Wrote client MCP config to \(clientConfigURL.path)")
         } catch {
             logMessage("ConfigManager: Failed to write client MCP config: \(error)")
@@ -385,13 +380,11 @@ public actor ConfigManager {
 
         do {
             let directoryURL = cloudConnectorConfigURL.deletingLastPathComponent()
-            if !FileManager.default.fileExists(atPath: directoryURL.path) {
-                try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            }
+            try Self.ensurePrivateDirectory(directoryURL)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(export)
-            try data.write(to: cloudConnectorConfigURL, options: .atomic)
+            try Self.writePrivateData(data, to: cloudConnectorConfigURL)
             logMessage("ConfigManager: Wrote cloud connector export to \(cloudConnectorConfigURL.path)")
         } catch {
             logMessage("ConfigManager: Failed to write cloud connector export: \(error)")
@@ -617,6 +610,19 @@ public actor ConfigManager {
         return settings
     }
 
+    private static func ensurePrivateDirectory(_ url: URL) throws {
+        let fileManager = FileManager.default
+        if !fileManager.fileExists(atPath: url.path) {
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+    }
+
+    private static func writePrivateData(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
     public static func defaultPrimaryConnectorsPath() -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let projects = home.appendingPathComponent("Developer/Projects")
@@ -671,18 +677,20 @@ public actor ConfigManager {
     }
 
     public static func generateSecureToken() -> String {
-        let letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        var token = "ames_"
         var randomBytes = [UInt8](repeating: 0, count: 32)
         let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
         if status == errSecSuccess {
-            for byte in randomBytes {
-                let index = Int(byte) % letters.count
-                token.append(letters[letters.index(letters.startIndex, offsetBy: index)])
-            }
-            return token
+            return "ames_" + Data(randomBytes)
+                .base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
         }
-        return token + String((0..<32).map { _ in letters.randomElement()! })
+
+        logMessage("ConfigManager.generateSecureToken: SecRandomCopyBytes failed with status \(status)")
+        let letters = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+        var generator = SystemRandomNumberGenerator()
+        return "ames_" + String((0..<43).map { _ in letters.randomElement(using: &generator)! })
     }
 
     public static func defaultEnvReferences(claudeEnvURL: URL, claudeSettingsURL: URL) -> [String: String] {

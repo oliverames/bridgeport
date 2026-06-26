@@ -166,6 +166,9 @@ import Testing
 
     [mcp_servers.web_docs]
     url = "https://example.com/mcp"
+
+    [mcp_servers.remote_command]
+    command = "wss://example.com/mcp"
     """.write(to: codexConfig, atomically: true, encoding: .utf8)
 
     let manager = ConnectorManager(connectorPaths: [codexConfig.path])
@@ -192,6 +195,61 @@ import Testing
     #expect(servers["quoted.name"]?.command == "node")
     #expect(servers["quoted.name"]?.args == ["server.js", "--name=quoted.name"])
     #expect(servers["quoted.name"]?.env?["API_TOKEN"] == "op://Development/Token/credential")
+}
+
+@Test func parsesCodexMultilineArraysAndInlineEnv() {
+    let servers = ConnectorManager.codexMCPServers(fromTOML: """
+    [mcp_servers.multiline]
+    command = "node"
+    args = [
+      "server.js",
+      "--flag=value",
+    ]
+    env = {
+      "TOKEN_REF" = "${TOKEN_REF}",
+      "NODE_PATH" = "/tmp/node",
+    }
+    """)
+
+    #expect(servers["multiline"]?.command == "node")
+    #expect(servers["multiline"]?.args == ["server.js", "--flag=value"])
+    #expect(servers["multiline"]?.env?["TOKEN_REF"] == "${TOKEN_REF}")
+    #expect(servers["multiline"]?.env?["NODE_PATH"] == "/tmp/node")
+}
+
+@Test func staleImportedWebCommandsAreSkipped() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let config = BridgeportConfig(
+        connectorsPath: root.appendingPathComponent("missing-source").path,
+        additionalConnectorPaths: [],
+        importedConnectors: [
+            "bad": BridgeportImportedConnector(
+                command: "https://example.com/mcp",
+                directoryPath: root.path,
+                configPath: root.appendingPathComponent(".mcp.json").path,
+                importedFrom: root.path
+            ),
+            "remote": BridgeportImportedConnector(
+                command: "ssh://example.com/mcp",
+                directoryPath: root.path,
+                configPath: root.appendingPathComponent(".mcp.json").path,
+                importedFrom: root.path
+            ),
+            "good": BridgeportImportedConnector(
+                command: "node",
+                args: ["server.js"],
+                directoryPath: root.path,
+                configPath: root.appendingPathComponent(".mcp.json").path,
+                importedFrom: root.path
+            )
+        ]
+    )
+    let manager = ConnectorManager(config: config)
+    let connectors = await manager.discoverConnectors()
+
+    #expect(connectors.map(\.name) == ["good"])
 }
 
 @Test func clientConfigUsesHeaderAuthAndMcpEndpoint() async throws {
@@ -234,6 +292,49 @@ import Testing
     #expect(mock["url"] as? String == "https://mcp.example.com/mcp/mock")
     #expect(headers["Authorization"] == "Bearer test-token")
     #expect((mock["url"] as? String)?.contains("token=") == false)
+}
+
+@Test func generatedConfigFilesArePrivate() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let manager = ConfigManager(
+        configURL: root.appendingPathComponent("config.json"),
+        clientConfigURL: root.appendingPathComponent("mcp_config.json"),
+        cloudConnectorConfigURL: root.appendingPathComponent("cloud_connectors.json")
+    )
+    let connector = Connector(
+        name: "mock",
+        directoryPath: root.path,
+        configPath: root.appendingPathComponent(".mcp.json").path,
+        command: "python3",
+        args: [],
+        env: [:],
+        importedFrom: root.path,
+        sourceKind: .imported
+    )
+    let config = BridgeportConfig(
+        token: "test-token",
+        port: 8080,
+        publicBaseURL: "https://mcp.example.com/",
+        connectorSettings: [
+            "mock": BridgeportConnectorSettings(enabled: true, exposePublicly: true)
+        ]
+    )
+
+    await manager.save(config)
+    await manager.writeMcpClientConfig(config: config, connectors: [connector])
+    await manager.writeCloudConnectorConfig(config: config, connectors: [connector])
+
+    for url in [
+        root.appendingPathComponent("config.json"),
+        root.appendingPathComponent("mcp_config.json"),
+        root.appendingPathComponent("cloud_connectors.json")
+    ] {
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let permissions = try #require(attrs[.posixPermissions] as? NSNumber).intValue & 0o777
+        #expect(permissions == 0o600)
+    }
 }
 
 @Test func cloudConnectorExportCoversClaudeAnthropicMistralAndVibe() {
@@ -304,6 +405,45 @@ import Testing
     #expect(SSEServer.constantTimeEquals("Bearer test-token", "Bearer test-token"))
     #expect(!SSEServer.constantTimeEquals("Bearer test-token", "Bearer test-token-extra"))
     #expect(!SSEServer.constantTimeEquals("Bearer test-token", "bearer test-token"))
+}
+
+@Test func generatedTokensUseURLSafeCharacters() {
+    let token = ConfigManager.generateSecureToken()
+    #expect(token.hasPrefix("ames_"))
+    #expect(token.count >= 48)
+    #expect(token.allSatisfy { character in
+        character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == "-")
+    })
+}
+
+@Test func processBridgeTerminatesEnvOptionsBeforeConnectorCommand() {
+    let connector = Connector(
+        name: "option-like",
+        directoryPath: "/tmp",
+        configPath: "/tmp/.mcp.json",
+        command: "-S",
+        args: ["node server.js"],
+        env: [:],
+        importedFrom: "/tmp/.mcp.json",
+        sourceKind: .imported
+    )
+
+    #expect(ProcessBridge.envLaunchArguments(for: connector) == ["--", "-S", "node server.js"])
+}
+
+@Test func launchAgentPlistEscapesSpecialCharacters() throws {
+    let data = try LaunchAgentPlist.makeData(
+        label: "com.oliverames.bridgeport",
+        executablePath: "/tmp/bridgeport & release/bin/bridgeport",
+        stdoutPath: "/tmp/bridgeport & release/stdout.log",
+        stderrPath: "/tmp/bridgeport & release/stderr.log"
+    )
+    let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+
+    #expect(plist["Label"] as? String == "com.oliverames.bridgeport")
+    #expect(plist["ProgramArguments"] as? [String] == ["/tmp/bridgeport & release/bin/bridgeport", "--server"])
+    #expect(plist["StandardOutPath"] as? String == "/tmp/bridgeport & release/stdout.log")
+    #expect(plist["StandardErrorPath"] as? String == "/tmp/bridgeport & release/stderr.log")
 }
 
 private func temporaryDirectory() throws -> URL {
