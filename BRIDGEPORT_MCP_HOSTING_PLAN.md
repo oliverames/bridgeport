@@ -144,7 +144,7 @@ Generated file: `~/.config/bridgeport/cloud_connectors.json`.
 {
   "claudeCustomConnectors": [
     {
-      "name": "ynab-mcp-server",
+      "name": "YNAB (BridgePort)",
       "remoteMCPServerURL": "https://mcp.amesvt.com/mcp/ynab",
       "readyForClaudeApp": true
     }
@@ -159,9 +159,14 @@ Generated file: `~/.config/bridgeport/cloud_connectors.json`.
   ],
   "mistralCustomConnectors": [
     {
-      "name": "bridgeport_ynab",
+      "name": "ynab-mcp-server",
       "serverURL": "https://mcp.amesvt.com/mcp/ynab",
-      "authenticationMethod": "HTTP Bearer Token"
+      "authenticationMethod": "HTTP Bearer Token",
+      "apiCreatePayload": {
+        "title": "YNAB (BridgePort)",
+        "name": "ynab_bridgeport",
+        "icon_url": "https://mcp.amesvt.com/icons/ynab?v=..."
+      }
     }
   ]
 }

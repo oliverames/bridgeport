@@ -211,13 +211,13 @@ Anthropic Messages API MCP connector definitions use `authorization_token`, so t
 Mistral Work/Vibe custom connectors can use the same public MCP URL and select or auto-detect HTTP Bearer Token auth in the UI:
 
 ```text
-Name: bridgeport_ynab
+Name: YNAB (BridgePort)
 Server URL: https://mcp.amesvt.com/mcp/ynab
 Authentication: HTTP Bearer Token
 Authorization header: Bearer ames_...
 ```
 
-For connector-card artwork, prefer the generated Mistral API create payload in `cloud_connectors.json`. It includes the server URL, private visibility, bearer header, and Bridgeport's cache-busted `/icons/<connector>?v=...` URL as `icon_url`, which avoids Mistral falling back to the Cloudflare tunnel favicon.
+For connector-card artwork, prefer the generated Mistral API create payload in `cloud_connectors.json`. It includes the server URL, private visibility, bearer header, provider-facing title-case name, and Bridgeport's cache-busted `/icons/<connector>?v=...` URL as `icon_url`. For wrapper plugins, Bridgeport prefers the bundled source repo icon, for example `sources/ynab-mcp-server/assets/icon.png`, before wrapper-level icons.
 
 Vibe Code CLI can use the generated TOML:
 

@@ -151,7 +151,7 @@ Server URL: https://mcp.amesvt.com/mcp/ynab
 Authorization: Bearer ames_...
 ```
 
-For reliable Mistral connector-card artwork, use the generated Mistral API create payload from `cloud_connectors.json`. It includes Bridgeport's cache-busted `/icons/<connector>?v=...` URL as `icon_url`, plus the private visibility setting and authorization header.
+For reliable Mistral connector-card artwork, use the generated Mistral API create payload from `cloud_connectors.json`. It includes the provider-facing name, Bridgeport's cache-busted `/icons/<connector>?v=...` URL as `icon_url`, plus the private visibility setting and authorization header. For wrapper plugins, Bridgeport prefers the bundled source repo icon before wrapper-level icons.
 
 Bridgeport returns `WWW-Authenticate: Bearer realm="Bridgeport", resource_metadata="..."` on unauthorized requests so OAuth-capable clients can discover authorization metadata and Bearer-capable clients can detect header authentication.
 

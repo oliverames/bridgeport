@@ -523,6 +523,7 @@ import Darwin
     )
 
     #expect(export.claudeCustomConnectors.count == 1)
+    #expect(export.claudeCustomConnectors.first?.name == "Mock (BridgePort)")
     #expect(export.claudeCustomConnectors.first?.remoteMCPServerURL == "https://mcp.example.com/mcp/mock")
     #expect(export.claudeCustomConnectors.first?.readyForClaudeApp == true)
     #expect(export.claudeCustomConnectors.first?.authentication == "OAuth 2.1 authorization code with PKCE")
@@ -533,12 +534,16 @@ import Darwin
     #expect(export.anthropicMessagesAPIMCPServers.first?.authorizationToken == "test-token")
     #expect(export.mistralCustomConnectors.first?.authenticationMethod == "HTTP Bearer Token")
     #expect(export.mistralCustomConnectors.first?.authorizationHeader == "Bearer test-token")
+    #expect(export.mistralCustomConnectors.first?.name == "Mock (BridgePort)")
     #expect(export.mistralCustomConnectors.first?.iconURL == "https://mcp.example.com/icons/mock")
-    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.name == "bridgeport_mock")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.title == "Mock (BridgePort)")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.name == "mock_bridgeport")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.server == "https://mcp.example.com/mcp/mock")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.iconURL == "https://mcp.example.com/icons/mock")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.visibility == "private")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.headers["Authorization"] == "Bearer test-token")
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.mistralIntegration == false)
+    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.privateToolExecution == false)
     #expect(export.vibeCodeMCPServers.first?.transport == "streamable-http")
     #expect(export.vibeCodeMCPServers.first?.toml.contains("headers = { \"Authorization\" = \"Bearer test-token\" }") == true)
 
@@ -596,6 +601,58 @@ import Darwin
 
     #expect(export.iconURL == "https://mcp.example.com/icons/mock?v=4-1234")
     #expect(export.apiCreatePayload.iconURL == "https://mcp.example.com/icons/mock?v=4-1234")
+}
+
+@Test func mistralConnectorUsesSourceRepoIconBeforeWrapperIcon() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let wrapperAssets = root.appendingPathComponent("assets")
+    try FileManager.default.createDirectory(at: wrapperAssets, withIntermediateDirectories: true)
+    let wrapperIcon = wrapperAssets.appendingPathComponent("icon.png")
+    try Data([0, 1, 2, 3]).write(to: wrapperIcon)
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSince1970: 1_234)],
+        ofItemAtPath: wrapperIcon.path
+    )
+
+    let sourceAssets = root.appendingPathComponent("sources/ynab-mcp-server/assets")
+    try FileManager.default.createDirectory(at: sourceAssets, withIntermediateDirectories: true)
+    let sourceIcon = sourceAssets.appendingPathComponent("icon.png")
+    try Data([0, 1, 2, 3, 4, 5]).write(to: sourceIcon)
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSince1970: 4_321)],
+        ofItemAtPath: sourceIcon.path
+    )
+
+    let connector = Connector(
+        name: "ynab-mcp-server",
+        directoryPath: root.path,
+        configPath: root.appendingPathComponent(".mcp.json").path,
+        command: "npx",
+        args: [],
+        env: [:],
+        importedFrom: root.path,
+        sourceKind: .mirrored
+    )
+    let config = BridgeportConfig(
+        token: "test-token",
+        port: 8080,
+        publicBaseURL: "https://mcp.example.com",
+        connectorSettings: [
+            "ynab-mcp-server": BridgeportConnectorSettings(enabled: true, exposePublicly: true, publicPath: "/ynab")
+        ]
+    )
+
+    let export = ConfigManager.mistralCustomConnector(config: config, connector: connector)
+
+    #expect(ConfigManager.connectorIconCandidateURLs(for: connector).first?.path == sourceIcon.path)
+    #expect(export.iconURL == "https://mcp.example.com/icons/ynab?v=6-4321")
+    #expect(export.apiCreatePayload.iconURL == "https://mcp.example.com/icons/ynab?v=6-4321")
+    #expect(export.name == "YNAB (BridgePort)")
+    #expect(export.apiCreatePayload.title == "YNAB (BridgePort)")
+    #expect(export.apiCreatePayload.name == "ynab_bridgeport")
+    #expect(ConfigManager.providerDisplayName(for: connector, routePath: "ynab") == "YNAB (BridgePort)")
 }
 
 @Test func mistralSafeConnectorNamesMatchAPIContract() {

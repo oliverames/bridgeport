@@ -161,20 +161,26 @@ public struct MistralCustomConnectorExport: Codable, Sendable {
 }
 
 public struct MistralConnectorCreatePayload: Codable, Sendable {
+    public let title: String
     public let name: String
     public let description: String
     public let server: String
     public let visibility: String
     public let iconURL: String
     public let headers: [String: String]
+    public let mistralIntegration: Bool
+    public let privateToolExecution: Bool
 
     enum CodingKeys: String, CodingKey {
+        case title
         case name
         case description
         case server
         case visibility
         case iconURL = "icon_url"
         case headers
+        case mistralIntegration = "mistral_integration"
+        case privateToolExecution = "private_tool_execution"
     }
 }
 
@@ -508,7 +514,7 @@ public actor ConfigManager {
                 let baseURL = clientEndpointBaseURL(port: config.port ?? 8080, publicBaseURL: config.publicBaseURL)
                 let routePath = config.publicRoutePath(for: connector)
                 return ClaudeCustomConnectorExport(
-                    name: connector.name,
+                    name: providerDisplayName(for: connector, routePath: routePath),
                     remoteMCPServerURL: mcpEndpointURL(baseURL: baseURL, routePath: routePath),
                     readyForClaudeApp: true,
                     authentication: "OAuth 2.1 authorization code with PKCE",
@@ -570,9 +576,10 @@ public actor ConfigManager {
         )
         let description = "Bridgeport-hosted MCP connector for \(connector.name)."
         let authorizationHeader = "Bearer \(config.token ?? "")"
-        let apiName = mistralSafeConnectorName("bridgeport_\(routePath)")
+        let displayName = mistralDisplayName(for: connector, routePath: routePath)
+        let slug = mistralConnectorSlug(for: connector, routePath: routePath)
         return MistralCustomConnectorExport(
-            name: connector.name,
+            name: displayName,
             serverURL: serverURL,
             iconURL: iconURL,
             description: description,
@@ -580,12 +587,15 @@ public actor ConfigManager {
             authenticationMethod: "HTTP Bearer Token",
             authorizationHeader: authorizationHeader,
             apiCreatePayload: MistralConnectorCreatePayload(
-                name: apiName,
+                title: displayName,
+                name: slug,
                 description: description,
                 server: serverURL,
                 visibility: "private",
                 iconURL: iconURL,
-                headers: ["Authorization": authorizationHeader]
+                headers: ["Authorization": authorizationHeader],
+                mistralIntegration: false,
+                privateToolExecution: false
             )
         )
     }
@@ -702,6 +712,39 @@ public actor ConfigManager {
         return components.url?.absoluteString ?? "\(endpoint)?token=\(queryToken)"
     }
 
+    public static func providerDisplayName(for connector: Connector, routePath: String) -> String {
+        if connector.name.localizedCaseInsensitiveContains("ynab") || routePath.localizedCaseInsensitiveContains("ynab") {
+            return "YNAB (BridgePort)"
+        }
+
+        let readable = connector.name
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { word -> String in
+                let lower = word.lowercased()
+                guard let first = lower.first else { return "" }
+                return String(first).uppercased() + String(lower.dropFirst())
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        return readable.isEmpty ? "BridgePort Connector" : "\(readable) (BridgePort)"
+    }
+
+    public static func mistralDisplayName(for connector: Connector, routePath: String) -> String {
+        providerDisplayName(for: connector, routePath: routePath)
+    }
+
+    public static func mistralConnectorSlug(for connector: Connector, routePath: String) -> String {
+        if connector.name.localizedCaseInsensitiveContains("ynab") || routePath.localizedCaseInsensitiveContains("ynab") {
+            return "ynab_bridgeport"
+        }
+
+        let base = normalizedRoutePath(routePath)
+        return mistralSafeConnectorName("\(base)_bridgeport").lowercased()
+    }
+
     public static func mistralSafeConnectorName(_ name: String) -> String {
         let characters = name.unicodeScalars.map { scalar -> Character in
             let isASCIIDigit = scalar.value >= 48 && scalar.value <= 57
@@ -717,9 +760,19 @@ public actor ConfigManager {
         return String(fallback.prefix(64))
     }
 
-    private static func connectorIconCacheKey(for connector: Connector) -> String? {
+    public static func connectorIconCandidateURLs(for connector: Connector) -> [URL] {
         let directoryURL = URL(fileURLWithPath: connector.directoryPath)
-        let candidates = [
+        return [
+            directoryURL.appendingPathComponent("sources/\(connector.name)/assets/icon.png"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/assets/icon.svg"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/codex/assets/icon.png"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/codex/assets/icon.svg"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/icon.png"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/icon.svg"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/.claude-plugin/assets/icon.png"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/.claude-plugin/assets/icon.svg"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/.codex-plugin/assets/icon.png"),
+            directoryURL.appendingPathComponent("sources/\(connector.name)/.codex-plugin/assets/icon.svg"),
             directoryURL.appendingPathComponent("assets/icon.png"),
             directoryURL.appendingPathComponent("assets/icon.svg"),
             directoryURL.appendingPathComponent("images/icon.png"),
@@ -736,13 +789,19 @@ public actor ConfigManager {
             directoryURL.appendingPathComponent(".codex-plugin/icon.svg"),
             directoryURL.appendingPathComponent(".codex-plugin/assets/icon.png"),
             directoryURL.appendingPathComponent(".codex-plugin/assets/icon.svg"),
+            directoryURL.appendingPathComponent(".cursor-plugin/icon.png"),
+            directoryURL.appendingPathComponent(".cursor-plugin/icon.svg"),
+            directoryURL.appendingPathComponent(".cursor-plugin/assets/icon.png"),
+            directoryURL.appendingPathComponent(".cursor-plugin/assets/icon.svg"),
             directoryURL.appendingPathComponent(".github/plugin/icon.png"),
             directoryURL.appendingPathComponent(".github/plugin/icon.svg"),
             directoryURL.appendingPathComponent(".github/plugin/assets/icon.png"),
             directoryURL.appendingPathComponent(".github/plugin/assets/icon.svg")
         ]
+    }
 
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+    private static func connectorIconCacheKey(for connector: Connector) -> String? {
+        for candidate in connectorIconCandidateURLs(for: connector) where FileManager.default.fileExists(atPath: candidate.path) {
             guard ["png", "svg"].contains(candidate.pathExtension.lowercased()) else { continue }
             return iconFileCacheKey(candidate)
         }

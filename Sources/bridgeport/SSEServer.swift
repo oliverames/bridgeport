@@ -1057,44 +1057,13 @@ public actor SSEServer {
     }
 
     private func connectorIconAsset(for connector: Connector) -> ConnectorIconAsset? {
-        let directoryURL = URL(fileURLWithPath: connector.directoryPath)
-        let candidates = [
-            directoryURL.appendingPathComponent("assets/icon.png"),
-            directoryURL.appendingPathComponent("assets/icon.svg"),
-            directoryURL.appendingPathComponent("images/icon.png"),
-            directoryURL.appendingPathComponent("images/icon.svg"),
-            directoryURL.appendingPathComponent("public/icon.png"),
-            directoryURL.appendingPathComponent("public/icon.svg"),
-            directoryURL.appendingPathComponent("codex/assets/icon.png"),
-            directoryURL.appendingPathComponent("codex/assets/icon.svg"),
-            directoryURL.appendingPathComponent("sources/\(connector.name)/icon.png"),
-            directoryURL.appendingPathComponent("sources/\(connector.name)/icon.svg"),
-            directoryURL.appendingPathComponent("sources/\(connector.name)/assets/icon.png"),
-            directoryURL.appendingPathComponent("sources/\(connector.name)/assets/icon.svg"),
-            directoryURL.appendingPathComponent(".claude-plugin/icon.png"),
-            directoryURL.appendingPathComponent(".claude-plugin/icon.svg"),
-            directoryURL.appendingPathComponent(".claude-plugin/assets/icon.png"),
-            directoryURL.appendingPathComponent(".claude-plugin/assets/icon.svg"),
-            directoryURL.appendingPathComponent(".codex-plugin/icon.png"),
-            directoryURL.appendingPathComponent(".codex-plugin/icon.svg"),
-            directoryURL.appendingPathComponent(".codex-plugin/assets/icon.png"),
-            directoryURL.appendingPathComponent(".codex-plugin/assets/icon.svg"),
-            directoryURL.appendingPathComponent(".cursor-plugin/icon.png"),
-            directoryURL.appendingPathComponent(".cursor-plugin/icon.svg"),
-            directoryURL.appendingPathComponent(".cursor-plugin/assets/icon.png"),
-            directoryURL.appendingPathComponent(".cursor-plugin/assets/icon.svg"),
-            directoryURL.appendingPathComponent(".github/plugin/icon.png"),
-            directoryURL.appendingPathComponent(".github/plugin/icon.svg"),
-            directoryURL.appendingPathComponent(".github/plugin/assets/icon.png"),
-            directoryURL.appendingPathComponent(".github/plugin/assets/icon.svg")
-        ]
-
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+        for candidate in ConfigManager.connectorIconCandidateURLs(for: connector) where FileManager.default.fileExists(atPath: candidate.path) {
             if let asset = fileIconAsset(candidate) {
                 return asset
             }
         }
 
+        let directoryURL = URL(fileURLWithPath: connector.directoryPath)
         if let declared = declaredIconAsset(for: connector, directoryURL: directoryURL) {
             return declared
         }
