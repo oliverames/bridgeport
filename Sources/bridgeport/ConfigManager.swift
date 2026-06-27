@@ -302,6 +302,10 @@ public enum BridgeportPaths {
         configDirectory(environment: environment).appendingPathComponent("cloud_connectors.json")
     }
 
+    public static func oauthClientRegistryURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        configDirectory(environment: environment).appendingPathComponent("oauth_clients.json")
+    }
+
     public static func installedBinaryURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         configDirectory(environment: environment).appendingPathComponent("bin/bridgeport")
     }

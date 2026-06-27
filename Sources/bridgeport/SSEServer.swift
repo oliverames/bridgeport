@@ -266,10 +266,10 @@ public actor SSEServer {
     private var server: HTTPServer?
     private var sessions: [String: BridgeSession] = [:]
 
-    public init(config: BridgeportConfig, manager: ConnectorManager, oauthStore: OAuthTokenStore = OAuthTokenStore()) {
+    public init(config: BridgeportConfig, manager: ConnectorManager, oauthStore: OAuthTokenStore? = nil) {
         self.config = config
         self.manager = manager
-        self.oauthStore = oauthStore
+        self.oauthStore = oauthStore ?? OAuthTokenStore(clientRegistryURL: BridgeportPaths.oauthClientRegistryURL())
     }
 
     public init(port: UInt16, token: String, manager: ConnectorManager, disabledConnectors: [String] = []) {
@@ -942,9 +942,19 @@ public actor SSEServer {
               let codeChallenge = values["code_challenge"],
               !codeChallenge.isEmpty,
               let resource = values["resource"],
-              await isAllowedOAuthResource(resource),
-              let client = await oauthStore.client(id: clientID),
-              client.redirectURIs.contains(redirectURI) else {
+              await isAllowedOAuthResource(resource) else {
+            return nil
+        }
+
+        var client = await oauthStore.client(id: clientID)
+        if client == nil {
+            client = await oauthStore.adoptClientIfNeeded(
+                clientID: clientID,
+                clientName: Self.oauthClientName(from: redirectURI),
+                redirectURI: redirectURI
+            )
+        }
+        guard let client, client.redirectURIs.contains(redirectURI) else {
             return nil
         }
 
@@ -956,6 +966,13 @@ public actor SSEServer {
             state: values["state"],
             resource: resource
         )
+    }
+
+    private static func oauthClientName(from redirectURI: String) -> String {
+        guard let host = URLComponents(string: redirectURI)?.host, !host.isEmpty else {
+            return "OAuth client"
+        }
+        return host
     }
 
     private func authorizationFormHTML(validation: OAuthAuthorizationValidation, error: String?) -> String {

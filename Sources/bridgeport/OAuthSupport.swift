@@ -1,11 +1,15 @@
 import CryptoKit
 import Foundation
 
-public struct OAuthRegisteredClient: Sendable {
+public struct OAuthRegisteredClient: Codable, Sendable {
     public let clientID: String
     public let clientName: String
     public let redirectURIs: [String]
     public let issuedAt: Int
+}
+
+private struct PersistedOAuthClientRegistry: Codable {
+    let clients: [OAuthRegisteredClient]
 }
 
 private struct OAuthAuthorizationCode: Sendable {
@@ -24,11 +28,15 @@ private struct OAuthAccessToken: Sendable {
 }
 
 public actor OAuthTokenStore {
-    private var clients: [String: OAuthRegisteredClient] = [:]
+    private let clientRegistryURL: URL?
+    private var clients: [String: OAuthRegisteredClient]
     private var authorizationCodes: [String: OAuthAuthorizationCode] = [:]
     private var accessTokens: [String: OAuthAccessToken] = [:]
 
-    public init() {}
+    public init(clientRegistryURL: URL? = nil) {
+        self.clientRegistryURL = clientRegistryURL
+        self.clients = Self.loadClients(from: clientRegistryURL)
+    }
 
     public func registerClient(clientName: String, redirectURIs: [String], now: Date = Date()) -> OAuthRegisteredClient {
         let client = OAuthRegisteredClient(
@@ -38,11 +46,33 @@ public actor OAuthTokenStore {
             issuedAt: Int(now.timeIntervalSince1970)
         )
         clients[client.clientID] = client
+        persistClients()
         return client
     }
 
     public func client(id: String) -> OAuthRegisteredClient? {
         clients[id]
+    }
+
+    public func adoptClientIfNeeded(clientID: String, clientName: String, redirectURI: String, now: Date = Date()) -> OAuthRegisteredClient? {
+        if let client = clients[clientID] {
+            return client
+        }
+
+        guard OAuthSupport.isBridgeportGeneratedClientID(clientID),
+              OAuthSupport.isAllowedRedirectURI(redirectURI) else {
+            return nil
+        }
+
+        let client = OAuthRegisteredClient(
+            clientID: clientID,
+            clientName: clientName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "OAuth client" : clientName,
+            redirectURIs: [redirectURI],
+            issuedAt: Int(now.timeIntervalSince1970)
+        )
+        clients[clientID] = client
+        persistClients()
+        return client
     }
 
     public func issueAuthorizationCode(
@@ -107,6 +137,39 @@ public actor OAuthTokenStore {
     private func cleanup(now: Date) {
         authorizationCodes = authorizationCodes.filter { $0.value.expiresAt > now }
         accessTokens = accessTokens.filter { $0.value.expiresAt > now }
+    }
+
+    private static func loadClients(from url: URL?) -> [String: OAuthRegisteredClient] {
+        guard let url,
+              let data = try? Data(contentsOf: url),
+              let registry = try? JSONDecoder().decode(PersistedOAuthClientRegistry.self, from: data) else {
+            return [:]
+        }
+
+        return Dictionary(uniqueKeysWithValues: registry.clients.map { ($0.clientID, $0) })
+    }
+
+    private func persistClients() {
+        guard let clientRegistryURL else {
+            return
+        }
+
+        do {
+            let registry = PersistedOAuthClientRegistry(clients: clients.values.sorted { $0.clientID < $1.clientID })
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(registry)
+            let directory = clientRegistryURL.deletingLastPathComponent()
+            let fileManager = FileManager.default
+            if !fileManager.fileExists(atPath: directory.path) {
+                try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try data.write(to: clientRegistryURL, options: .atomic)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: clientRegistryURL.path)
+        } catch {
+            logMessage("OAuthTokenStore: Failed to persist OAuth client registry: \(error)")
+        }
     }
 }
 
@@ -177,6 +240,16 @@ public enum OAuthSupport {
         }
 
         return false
+    }
+
+    public static func isBridgeportGeneratedClientID(_ value: String) -> Bool {
+        guard value.hasPrefix("ames_"), value.count >= 48 else {
+            return false
+        }
+
+        return value.allSatisfy { character in
+            character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == "-")
+        }
     }
 
     public static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {

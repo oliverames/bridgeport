@@ -723,6 +723,53 @@ import Darwin
     #expect(!(await store.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/apple-notes")))
 }
 
+@Test func oauthRegisteredClientsPersistAcrossStores() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let registry = root.appendingPathComponent("oauth_clients.json")
+    let firstStore = OAuthTokenStore(clientRegistryURL: registry)
+    let client = await firstStore.registerClient(
+        clientName: "Mistral",
+        redirectURIs: ["https://callback.mistral.ai/v1/integrations_auth/oauth2_callback"],
+        now: Date(timeIntervalSince1970: 100)
+    )
+
+    let reloadedStore = OAuthTokenStore(clientRegistryURL: registry)
+    let reloadedClient = await reloadedStore.client(id: client.clientID)
+
+    #expect(reloadedClient?.clientID == client.clientID)
+    #expect(reloadedClient?.clientName == "Mistral")
+    #expect(reloadedClient?.redirectURIs == client.redirectURIs)
+}
+
+@Test func oauthStoreAdoptsBridgeportClientIDsForAllowedRedirects() async {
+    let store = OAuthTokenStore()
+    let clientID = "ames_" + String(repeating: "A", count: 43)
+
+    let adopted = await store.adoptClientIfNeeded(
+        clientID: clientID,
+        clientName: "callback.mistral.ai",
+        redirectURI: "https://callback.mistral.ai/v1/integrations_auth/oauth2_callback",
+        now: Date(timeIntervalSince1970: 100)
+    )
+    let badID = await store.adoptClientIfNeeded(
+        clientID: "not-a-bridgeport-client",
+        clientName: "callback.mistral.ai",
+        redirectURI: "https://callback.mistral.ai/v1/integrations_auth/oauth2_callback"
+    )
+    let badRedirect = await store.adoptClientIfNeeded(
+        clientID: "ames_" + String(repeating: "B", count: 43),
+        clientName: "evil.example.com",
+        redirectURI: "http://evil.example.com/callback"
+    )
+
+    #expect(adopted?.clientID == clientID)
+    #expect(adopted?.redirectURIs == ["https://callback.mistral.ai/v1/integrations_auth/oauth2_callback"])
+    #expect(badID == nil)
+    #expect(badRedirect == nil)
+}
+
 @Test func generatedTokensUseURLSafeCharacters() {
     let token = ConfigManager.generateSecureToken()
     #expect(token.hasPrefix("ames_"))
