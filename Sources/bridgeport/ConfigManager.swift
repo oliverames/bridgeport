@@ -65,6 +65,61 @@ public struct OnePasswordEnvironmentSettings: Codable, Sendable {
     }
 }
 
+public struct CloudflareSettings: Codable, Sendable, Equatable {
+    public var enabled: Bool
+    public var profileName: String
+    public var accountId: String
+    public var zoneId: String
+    public var domain: String
+    public var hostname: String
+    public var tunnelName: String
+    public var tunnelId: String
+    public var credentialsFilePath: String
+    public var configFilePath: String
+    public var cloudflaredPath: String
+    public var launchAgentLabel: String
+    public var routeMode: String
+    public var apiTokenEnvVar: String
+    public var apiTokenOPReference: String
+    public var createdByBridgeport: Bool
+
+    public init(
+        enabled: Bool = false,
+        profileName: String = "Oliver Ames private",
+        accountId: String = "",
+        zoneId: String = "",
+        domain: String = "amesvt.com",
+        hostname: String = "mcp.amesvt.com",
+        tunnelName: String = "bridgeport",
+        tunnelId: String = "",
+        credentialsFilePath: String = "",
+        configFilePath: String = "",
+        cloudflaredPath: String = "",
+        launchAgentLabel: String = "com.oliverames.bridgeport.cloudflared",
+        routeMode: String = "single-hostname-path-routing",
+        apiTokenEnvVar: String = "CLOUDFLARE_API_TOKEN",
+        apiTokenOPReference: String = "",
+        createdByBridgeport: Bool = false
+    ) {
+        self.enabled = enabled
+        self.profileName = profileName
+        self.accountId = accountId
+        self.zoneId = zoneId
+        self.domain = domain
+        self.hostname = hostname
+        self.tunnelName = tunnelName
+        self.tunnelId = tunnelId
+        self.credentialsFilePath = credentialsFilePath
+        self.configFilePath = configFilePath
+        self.cloudflaredPath = cloudflaredPath
+        self.launchAgentLabel = launchAgentLabel
+        self.routeMode = routeMode
+        self.apiTokenEnvVar = apiTokenEnvVar
+        self.apiTokenOPReference = apiTokenOPReference
+        self.createdByBridgeport = createdByBridgeport
+    }
+}
+
 public struct ClaudeCustomConnectorExport: Codable, Sendable {
     public let name: String
     public let remoteMCPServerURL: String
@@ -163,6 +218,7 @@ public struct BridgeportConfig: Codable, Sendable {
     public var importedConnectors: [String: BridgeportImportedConnector]?
     public var connectorSettings: [String: BridgeportConnectorSettings]?
     public var onePasswordEnvironment: OnePasswordEnvironmentSettings?
+    public var cloudflare: CloudflareSettings?
     public var env: [String: String]?
     public var disabledConnectors: [String]?
 
@@ -178,6 +234,7 @@ public struct BridgeportConfig: Codable, Sendable {
         importedConnectors: [String: BridgeportImportedConnector]? = nil,
         connectorSettings: [String: BridgeportConnectorSettings]? = nil,
         onePasswordEnvironment: OnePasswordEnvironmentSettings? = nil,
+        cloudflare: CloudflareSettings? = nil,
         env: [String: String]? = nil,
         disabledConnectors: [String]? = nil
     ) {
@@ -192,6 +249,7 @@ public struct BridgeportConfig: Codable, Sendable {
         self.importedConnectors = importedConnectors
         self.connectorSettings = connectorSettings
         self.onePasswordEnvironment = onePasswordEnvironment
+        self.cloudflare = cloudflare
         self.env = env
         self.disabledConnectors = disabledConnectors
     }
@@ -322,6 +380,17 @@ public actor ConfigManager {
             if config.onePasswordEnvironment == nil {
                 config.onePasswordEnvironment = OnePasswordEnvironmentSettings()
                 shouldSave = true
+            }
+
+            if config.cloudflare == nil {
+                config.cloudflare = Self.defaultCloudflareSettings()
+                shouldSave = true
+            } else {
+                let normalizedCloudflare = Self.normalizedCloudflareSettings(config.cloudflare!)
+                if normalizedCloudflare != config.cloudflare {
+                    config.cloudflare = normalizedCloudflare
+                    shouldSave = true
+                }
             }
 
             if config.env == nil {
@@ -587,6 +656,7 @@ public actor ConfigManager {
             importedConnectors: [:],
             connectorSettings: [:],
             onePasswordEnvironment: OnePasswordEnvironmentSettings(),
+            cloudflare: defaultCloudflareSettings(),
             env: loadDefaultEnvFromClaude(),
             disabledConnectors: []
         )
@@ -820,6 +890,55 @@ public actor ConfigManager {
             paths.append(standardized)
         }
         return paths
+    }
+
+    public static func defaultCloudflareSettings() -> CloudflareSettings {
+        normalizedCloudflareSettings(CloudflareSettings())
+    }
+
+    public static func normalizedCloudflareSettings(_ settings: CloudflareSettings) -> CloudflareSettings {
+        var normalized = settings
+        if normalized.profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.profileName = "Oliver Ames private"
+        }
+        if normalized.domain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.domain = "amesvt.com"
+        }
+        if normalized.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.hostname = "mcp.\(normalized.domain)"
+        }
+        if normalized.tunnelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.tunnelName = "bridgeport"
+        }
+        if normalized.configFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.configFilePath = BridgeportPaths.configDirectory()
+                .appendingPathComponent("cloudflared/config.yml")
+                .path
+        } else {
+            normalized.configFilePath = expandedPath(normalized.configFilePath)
+        }
+        if normalized.cloudflaredPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.cloudflaredPath = CloudflareManager.defaultCloudflaredPath()
+        } else {
+            normalized.cloudflaredPath = expandedPath(normalized.cloudflaredPath)
+        }
+        if !normalized.credentialsFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.credentialsFilePath = expandedPath(normalized.credentialsFilePath)
+        }
+        if normalized.launchAgentLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.launchAgentLabel = "com.oliverames.bridgeport.cloudflared"
+        }
+        if normalized.routeMode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.routeMode = "single-hostname-path-routing"
+        }
+        if normalized.apiTokenEnvVar.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            normalized.apiTokenEnvVar = "CLOUDFLARE_API_TOKEN"
+        }
+        return normalized
+    }
+
+    private static func expandedPath(_ path: String) -> String {
+        URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path
     }
 
     public static func generateSecureToken() -> String {

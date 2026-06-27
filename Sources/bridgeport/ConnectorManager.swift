@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import Darwin
+#endif
 
 public struct MCPServiceConfig: Codable, Sendable {
     public let command: String
@@ -859,11 +862,59 @@ public actor ConnectorManager {
         }
 
         let expanded = NSString(string: path).expandingTildeInPath
-        guard let text = try? String(contentsOfFile: expanded, encoding: .utf8) else {
+        guard let text = Self.readDotenvText(at: expanded) else {
             logMessage("ConnectorManager: 1Password local env file not readable at \(expanded)")
             return [:]
         }
         return Self.parseDotenv(text)
+    }
+
+    static func readDotenvText(at path: String) -> String? {
+        if isFIFO(at: path) {
+            return readFIFOText(at: path)
+        }
+
+        return try? String(contentsOfFile: path, encoding: .utf8)
+    }
+
+    private static func isFIFO(at path: String) -> Bool {
+        #if os(macOS)
+        var fileInfo = stat()
+        guard lstat(path, &fileInfo) == 0 else { return false }
+        return (fileInfo.st_mode & S_IFMT) == S_IFIFO
+        #else
+        return false
+        #endif
+    }
+
+    private static func readFIFOText(at path: String) -> String? {
+        #if os(macOS)
+        let fd = open(path, O_RDONLY | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+
+        while true {
+            let bytesRead = read(fd, &buffer, buffer.count)
+            if bytesRead > 0 {
+                data.append(buffer, count: bytesRead)
+                continue
+            }
+            if bytesRead == 0 {
+                break
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                break
+            }
+            return nil
+        }
+
+        return String(data: data, encoding: .utf8) ?? ""
+        #else
+        return nil
+        #endif
     }
 
     public static func parseDotenv(_ text: String) -> [String: String] {

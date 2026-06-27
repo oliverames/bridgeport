@@ -15,9 +15,9 @@ sequenceDiagram
     participant Bridgeport as Bridgeport daemon
     participant Connector as Local MCP process
 
-    Client->>CF: POST /mcp/apple-notes with Authorization header
+    Client->>CF: POST /mcp/ynab with Authorization header
     CF->>Tunnel: Forward through tunnel
-    Tunnel->>Bridgeport: POST /mcp/apple-notes
+    Tunnel->>Bridgeport: POST /mcp/ynab
     Bridgeport->>Connector: JSON-RPC over stdio
     Connector->>Bridgeport: JSON-RPC response
     Bridgeport->>Client: text/event-stream response
@@ -35,84 +35,75 @@ Use these values in Bridgeport Settings:
 | Setting | Value |
 |---------|-------|
 | Bind Host | `127.0.0.1` |
-| Public Base URL | `https://mcp.amesvt.com` or the selected hostname |
+| Cloudflare enabled | On when public connector exposure is needed |
+| Profile | `Oliver Ames private` or a user-supplied Cloudflare profile |
+| Domain | `amesvt.com` or the user's Cloudflare zone |
+| Hostname | `mcp.amesvt.com` or the selected hostname |
+| Tunnel name | `bridgeport` by default |
+| Public Base URL | `https://mcp.amesvt.com`, derived from the hostname |
 | Allowed Origins | Localhost origins plus the public hostname origin |
 | Query-string token fallback | Off, unless a legacy client cannot send headers |
 
 Expose only the connectors that should be reachable remotely by enabling each connector's **Public** toggle.
 
-## Install cloudflared
+## Install And Authenticate cloudflared
+
+Bridgeport manages the local tunnel config and LaunchAgent, but `cloudflared` still needs a Cloudflare-authenticated tunnel credential. Install `cloudflared`, then either log in interactively or provide an existing tunnel credentials file.
 
 ```bash
 brew install cloudflared
 cloudflared tunnel login
-cloudflared tunnel create bridgeport
 ```
 
-The create command prints a tunnel UUID and writes credentials to `~/.cloudflared/<UUID>.json`.
+The login command writes the local origin certificate used by `cloudflared tunnel create`. Secret material must stay outside the repository and app bundle. Use 1Password, environment variables, or Cloudflare's local credentials file for private values.
 
-## Configure The Tunnel
+## Bridgeport-Owned Tunnel Lifecycle
 
-Create or update `~/.cloudflared/config.yml`:
+Use the Cloudflare settings pane:
+
+1. Set the profile, domain, hostname, tunnel name, and `cloudflared` path.
+2. Click **Prepare Local Config** to write Bridgeport's local `cloudflared` config and LaunchAgent.
+3. Click **Create or Repair Tunnel** after `cloudflared tunnel login` or equivalent credentials are available.
+4. Use **Start Tunnel**, **Stop Tunnel**, or **Restart Tunnel** from Bridgeport after that.
+
+The same lifecycle is available from the CLI:
+
+```bash
+swift run bridgeport --cloudflare-status
+swift run bridgeport --cloudflare-prepare
+swift run bridgeport --cloudflare-bootstrap
+swift run bridgeport --cloudflare-start
+swift run bridgeport --cloudflare-stop
+swift run bridgeport --cloudflare-restart
+```
+
+Bridgeport writes the managed tunnel config to `~/.config/bridgeport/cloudflared/config.yml`:
 
 ```yaml
 tunnel: <TUNNEL_UUID>
 credentials-file: /Users/oliverames/.cloudflared/<TUNNEL_UUID>.json
+loglevel: warn
+transport-loglevel: warn
+metrics: localhost:0
 
 ingress:
   - hostname: mcp.amesvt.com
-    service: http://localhost:8080
+    service: http://127.0.0.1:8080
   - service: http_status:404
 ```
 
-Create the DNS route:
+Bridgeport writes the managed LaunchAgent to `~/Library/LaunchAgents/com.oliverames.bridgeport.cloudflared.plist` and runs:
 
 ```bash
-cloudflared tunnel route dns bridgeport mcp.amesvt.com
+cloudflared tunnel --config ~/.config/bridgeport/cloudflared/config.yml run
 ```
 
-Run it manually for a first test:
+`Create or Repair Tunnel` is idempotent by design. It first asks `cloudflared` for an existing tunnel with the configured name, stores the discovered tunnel ID when found, creates a new named tunnel only when no matching tunnel exists, runs `cloudflared tunnel route dns`, then starts the Bridgeport LaunchAgent. If DNS already points at that tunnel, Bridgeport treats that as an already-converged route rather than creating duplicates.
+
+Verify the running service:
 
 ```bash
-cloudflared tunnel run bridgeport
-```
-
-## Run As A LaunchAgent
-
-Create `~/Library/LaunchAgents/com.cloudflare.cloudflared.bridgeport.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.cloudflare.cloudflared.bridgeport</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/opt/homebrew/bin/cloudflared</string>
-        <string>tunnel</string>
-        <string>--config</string>
-        <string>/Users/oliverames/.cloudflared/config.yml</string>
-        <string>run</string>
-    </array>
-    <key>KeepAlive</key>
-    <true/>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/Users/oliverames/.config/bridgeport/cloudflared_stdout.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/oliverames/.config/bridgeport/cloudflared_stderr.log</string>
-</dict>
-</plist>
-```
-
-Load it:
-
-```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cloudflare.cloudflared.bridgeport.plist
-launchctl print gui/$(id -u)/com.cloudflare.cloudflared.bridgeport
+launchctl print gui/$(id -u)/com.oliverames.bridgeport.cloudflared
 ```
 
 ## Client URLs
@@ -124,7 +115,7 @@ Bridgeport generates these in `~/.config/bridgeport/mcp_config.json` for public 
   "mcpServers": {
     "ynab-mcp-server": {
       "type": "http",
-      "url": "https://mcp.amesvt.com/mcp/ynab-mcp-server",
+      "url": "https://mcp.amesvt.com/mcp/ynab",
       "headers": {
         "Authorization": "Bearer ames_..."
       }
@@ -156,7 +147,7 @@ Claude, ChatGPT, and Mistral custom connectors connect from cloud infrastructure
 Mistral Work/Vibe custom connectors and Vibe Code can use the public URL with Bearer auth:
 
 ```text
-Server URL: https://mcp.amesvt.com/mcp/ynab-mcp-server
+Server URL: https://mcp.amesvt.com/mcp/ynab
 Authorization: Bearer ames_...
 ```
 

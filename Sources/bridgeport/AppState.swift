@@ -18,6 +18,8 @@ public final class AppState {
     public var token: String = ""
     public var env: [String: String] = [:]
     public var onePasswordEnvironment = OnePasswordEnvironmentSettings()
+    public var cloudflare = CloudflareSettings()
+    public var cloudflareStatus = CloudflareTunnelStatus()
     public var importedConnectors: [String: BridgeportImportedConnector] = [:]
     public var connectorSettings: [String: BridgeportConnectorSettings] = [:]
     public var discoveredConnectors: [Connector] = []
@@ -40,6 +42,18 @@ public final class AppState {
 
     public var publicCloudConnectors: [Connector] {
         ConfigManager.publicConnectors(config: currentConfig(), connectors: discoveredConnectors)
+    }
+
+    public var cloudflareStatusText: String {
+        switch cloudflareStatus.state {
+        case .disabled: "Disabled"
+        case .missingCloudflared: "Missing cloudflared"
+        case .needsTunnel: "Needs tunnel"
+        case .needsConfig: "Needs config"
+        case .stopped: "Stopped"
+        case .running: "Running"
+        case .error: "Error"
+        }
     }
 
     public var mirroredSourcePaths: [String] {
@@ -96,6 +110,7 @@ public final class AppState {
         await configManager.writeCloudConnectorConfig(config: currentConfig(), connectors: discoveredConnectors)
         checkDaemonStatus()
         await refreshDaemonRuntimeStatus()
+        await refreshCloudflareStatus()
     }
 
     public func save(restartDaemon: Bool = true) async {
@@ -258,7 +273,7 @@ public final class AppState {
         let launchAgentsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
 
         if isDaemonRunning {
-            _ = runShell("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+            LaunchAgentManager.bootout(label: label, uid: uid, plistURL: plistURL)
         }
 
         do {
@@ -298,7 +313,7 @@ public final class AppState {
             return
         }
 
-        let result = runShell("/bin/launchctl", ["bootstrap", "gui/\(uid)", plistURL.path])
+        let result = LaunchAgentManager.bootstrap(label: label, uid: uid, plistURL: plistURL)
         if result.status != 0 {
             logMessage("AppState: Failed to start daemon launchctl exit code \(result.status): \(result.stderr)")
         }
@@ -311,10 +326,7 @@ public final class AppState {
         let fileManager = FileManager.default
 
         if isDaemonRunning {
-            let result = runShell("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
-            if result.status != 0 {
-                _ = runShell("/bin/launchctl", ["bootout", "gui/\(uid)", plistURL.path])
-            }
+            LaunchAgentManager.bootout(label: label, uid: uid, plistURL: plistURL)
         }
 
         if fileManager.fileExists(atPath: plistURL.path) {
@@ -330,11 +342,7 @@ public final class AppState {
     }
 
     public func restartDaemon() async {
-        if isDaemonRunning {
-            _ = runShell("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
-        }
-
-        let result = runShell("/bin/launchctl", ["bootstrap", "gui/\(uid)", plistURL.path])
+        let result = LaunchAgentManager.restart(label: label, uid: uid, plistURL: plistURL)
         if result.status != 0 {
             logMessage("AppState: Failed to restart daemon: \(result.stderr)")
         }
@@ -409,9 +417,71 @@ public final class AppState {
             importedConnectors: importedConnectors,
             connectorSettings: connectorSettings,
             onePasswordEnvironment: onePasswordEnvironment,
+            cloudflare: cloudflare,
             env: env,
             disabledConnectors: connectorSettings.filter { !$0.value.enabled }.map(\.key).sorted()
         )
+    }
+
+    public func refreshCloudflareStatus() async {
+        let manager = CloudflareManager(
+            settings: cloudflare,
+            port: UInt16(port) ?? 8080,
+            bindHost: bindHost
+        )
+        cloudflareStatus = await manager.status()
+    }
+
+    public func prepareCloudflareConfiguration() async {
+        let manager = CloudflareManager(
+            settings: cloudflare,
+            port: UInt16(port) ?? 8080,
+            bindHost: bindHost
+        )
+        let result = await manager.prepareLocalConfiguration()
+        await applyCloudflare(result)
+    }
+
+    public func bootstrapCloudflareTunnel() async {
+        syncPublicBaseURLFromCloudflare()
+        let manager = CloudflareManager(
+            settings: cloudflare,
+            port: UInt16(port) ?? 8080,
+            bindHost: bindHost
+        )
+        let result = await manager.bootstrapTunnel()
+        await applyCloudflare(result)
+    }
+
+    public func startCloudflareTunnel() async {
+        syncPublicBaseURLFromCloudflare()
+        let manager = CloudflareManager(
+            settings: cloudflare,
+            port: UInt16(port) ?? 8080,
+            bindHost: bindHost
+        )
+        cloudflareStatus = await manager.startTunnel()
+        await save(restartDaemon: false)
+    }
+
+    public func stopCloudflareTunnel() async {
+        let manager = CloudflareManager(
+            settings: cloudflare,
+            port: UInt16(port) ?? 8080,
+            bindHost: bindHost
+        )
+        cloudflareStatus = await manager.stopTunnel()
+    }
+
+    public func restartCloudflareTunnel() async {
+        syncPublicBaseURLFromCloudflare()
+        let manager = CloudflareManager(
+            settings: cloudflare,
+            port: UInt16(port) ?? 8080,
+            bindHost: bindHost
+        )
+        cloudflareStatus = await manager.restartTunnel()
+        await save(restartDaemon: false)
     }
 
     private func apply(_ config: BridgeportConfig) {
@@ -427,6 +497,7 @@ public final class AppState {
         importedConnectors = config.importedConnectors ?? [:]
         connectorSettings = config.connectorSettings ?? ConfigManager.settingsFromLegacyDisabled(config.disabledConnectors ?? [])
         onePasswordEnvironment = config.onePasswordEnvironment ?? OnePasswordEnvironmentSettings()
+        cloudflare = ConfigManager.normalizedCloudflareSettings(config.cloudflare ?? CloudflareSettings())
     }
 
     private func normalizeConnectorSettings() {
@@ -456,5 +527,22 @@ public final class AppState {
             return
         }
         await mirrorMCPs(from: standardized)
+    }
+
+    private func applyCloudflare(_ result: CloudflareOperationResult) async {
+        cloudflare = result.settings
+        cloudflareStatus = result.status
+        if result.didChangeSettings {
+            await save(restartDaemon: false)
+        }
+    }
+
+    private func syncPublicBaseURLFromCloudflare() {
+        let cloudflareBaseURL = CloudflareManager.publicBaseURL(for: cloudflare)
+        if !cloudflareBaseURL.isEmpty {
+            publicBaseURL = cloudflareBaseURL
+            let origins = Set(allowedOrigins + ConfigManager.defaultAllowedOrigins(port: UInt16(port) ?? 8080, publicBaseURL: cloudflareBaseURL))
+            allowedOriginsText = origins.sorted().joined(separator: "\n")
+        }
     }
 }

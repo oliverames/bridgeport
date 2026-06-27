@@ -1,6 +1,9 @@
 import Foundation
 import Testing
 @testable import bridgeport
+#if os(macOS)
+import Darwin
+#endif
 
 @Test func normalizedRoutePathsAreStable() {
     #expect(ConfigManager.normalizedRoutePath("/ynab/") == "ynab")
@@ -75,6 +78,55 @@ import Testing
     #expect(values["TOOL_PATH"] == "/usr/local/bin/tool")
 }
 
+@Test func ynabConnectorWriteCapabilityFromSourceIsPreservedForProduction() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let connector = Connector(
+        name: "ynab-mcp-server",
+        directoryPath: root.path,
+        configPath: root.appendingPathComponent(".mcp.json").path,
+        command: "node",
+        args: [],
+        env: [
+            "YNAB_ALLOW_WRITES": "1"
+        ],
+        importedFrom: root.path,
+        sourceKind: .mirrored
+    )
+    let manager = ConnectorManager(config: BridgeportConfig(env: [:]), processEnvironment: ["PATH": "/usr/bin"])
+
+    let resolved = await manager.resolveEnvironment(for: connector)
+
+    #expect(resolved["YNAB_ALLOW_WRITES"] == "1")
+}
+
+@Test func bridgeportEnvCanTemporarilyForceYNABReadOnlyForValidation() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let connector = Connector(
+        name: "ynab-mcp-server",
+        directoryPath: root.path,
+        configPath: root.appendingPathComponent(".mcp.json").path,
+        command: "node",
+        args: [],
+        env: [
+            "YNAB_ALLOW_WRITES": "1"
+        ],
+        importedFrom: root.path,
+        sourceKind: .mirrored
+    )
+    let manager = ConnectorManager(
+        config: BridgeportConfig(env: ["YNAB_ALLOW_WRITES": "0"]),
+        processEnvironment: ["PATH": "/usr/bin"]
+    )
+
+    let resolved = await manager.resolveEnvironment(for: connector)
+
+    #expect(resolved["YNAB_ALLOW_WRITES"] == "0")
+}
+
 @Test func mountedOnePasswordEnvParticipatesInConnectorResolution() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -118,6 +170,38 @@ import Testing
     #expect(resolved["SHARED_VALUE"] == "from-mounted-env")
     #expect(resolved["YNAB_ALLOW_WRITES"] == "0")
 }
+
+#if os(macOS)
+@Test func mountedOnePasswordFIFOWithoutWriterDoesNotBlockConnectorResolution() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let fifoURL = root.appendingPathComponent("agent.env")
+    #expect(mkfifo(fifoURL.path, S_IRUSR | S_IWUSR) == 0)
+
+    let connector = Connector(
+        name: "ynab",
+        directoryPath: root.path,
+        configPath: root.appendingPathComponent(".mcp.json").path,
+        command: "node",
+        args: [],
+        env: ["YNAB_ALLOW_WRITES": "1"],
+        importedFrom: root.path,
+        sourceKind: .imported
+    )
+    let config = BridgeportConfig(
+        onePasswordEnvironment: OnePasswordEnvironmentSettings(enabled: true, localEnvFilePath: fifoURL.path),
+        env: [:]
+    )
+    let manager = ConnectorManager(config: config, processEnvironment: ["PATH": "/usr/bin"])
+
+    let start = Date()
+    let resolved = await manager.resolveEnvironment(for: connector)
+
+    #expect(Date().timeIntervalSince(start) < 1)
+    #expect(resolved["YNAB_ALLOW_WRITES"] == "1")
+}
+#endif
 
 @Test func unusedOnePasswordConfigReferencesAreNotInjectedIntoConnectorEnvironment() async throws {
     let root = try temporaryDirectory()
@@ -619,6 +703,90 @@ import Testing
     #expect(plist["ProgramArguments"] as? [String] == ["/tmp/bridgeport & release/bin/bridgeport", "--server"])
     #expect(plist["StandardOutPath"] as? String == "/tmp/bridgeport & release/stdout.log")
     #expect(plist["StandardErrorPath"] as? String == "/tmp/bridgeport & release/stderr.log")
+}
+
+@Test func defaultCloudflareSettingsPreloadSafePrivateProfileWithoutSecrets() {
+    let settings = ConfigManager.defaultCloudflareSettings()
+
+    #expect(settings.profileName == "Oliver Ames private")
+    #expect(settings.domain == "amesvt.com")
+    #expect(settings.hostname == "mcp.amesvt.com")
+    #expect(settings.tunnelName == "bridgeport")
+    #expect(settings.apiTokenEnvVar == "CLOUDFLARE_API_TOKEN")
+    #expect(settings.apiTokenOPReference.isEmpty)
+    #expect(settings.createdByBridgeport == false)
+}
+
+@Test func cloudflareSettingsNormalizeTildePaths() {
+    let settings = ConfigManager.normalizedCloudflareSettings(CloudflareSettings(
+        enabled: true,
+        credentialsFilePath: "~/.cloudflared/bridgeport.json",
+        configFilePath: "~/.config/bridgeport/cloudflared/config.yml",
+        cloudflaredPath: "~/bin/cloudflared"
+    ))
+
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    #expect(settings.credentialsFilePath == "\(home)/.cloudflared/bridgeport.json")
+    #expect(settings.configFilePath == "\(home)/.config/bridgeport/cloudflared/config.yml")
+    #expect(settings.cloudflaredPath == "\(home)/bin/cloudflared")
+}
+
+@Test func cloudflaredConfigYAMLUsesNamedTunnelAndLocalhostIngress() {
+    let yaml = CloudflareManager.cloudflaredConfigYAML(
+        settings: CloudflareSettings(
+            enabled: true,
+            hostname: "mcp.amesvt.com",
+            tunnelName: "bridgeport",
+            tunnelId: "11111111-2222-3333-4444-555555555555",
+            credentialsFilePath: "/Users/example/.cloudflared/bridgeport.json"
+        ),
+        port: 8080,
+        bindHost: "127.0.0.1"
+    )
+
+    #expect(yaml.contains(#"tunnel: "11111111-2222-3333-4444-555555555555""#))
+    #expect(yaml.contains(#"credentials-file: "/Users/example/.cloudflared/bridgeport.json""#))
+    #expect(yaml.contains(#"hostname: "mcp.amesvt.com""#))
+    #expect(yaml.contains(#"service: "http://127.0.0.1:8080""#))
+    #expect(yaml.contains("service: http_status:404"))
+    #expect(!yaml.lowercased().contains("token"))
+}
+
+@Test func cloudflareLaunchAgentRunsCloudflaredWithBridgeportConfig() throws {
+    let data = try CloudflareManager.launchAgentPlistData(
+        label: "com.oliverames.bridgeport.cloudflared",
+        cloudflaredPath: "/opt/homebrew/bin/cloudflared",
+        configFilePath: "/Users/example/.config/bridgeport/cloudflared/config.yml",
+        stdoutPath: "/Users/example/.config/bridgeport/cloudflared_stdout.log",
+        stderrPath: "/Users/example/.config/bridgeport/cloudflared_stderr.log"
+    )
+    let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+
+    #expect(plist["Label"] as? String == "com.oliverames.bridgeport.cloudflared")
+    #expect(plist["ProgramArguments"] as? [String] == [
+        "/opt/homebrew/bin/cloudflared",
+        "tunnel",
+        "--config",
+        "/Users/example/.config/bridgeport/cloudflared/config.yml",
+        "run"
+    ])
+    #expect(plist["KeepAlive"] as? Bool == true)
+    #expect(plist["RunAtLoad"] as? Bool == true)
+}
+
+@Test func cloudflareStatusDetectsMissingCloudflared() async {
+    let settings = CloudflareSettings(
+        enabled: true,
+        configFilePath: "/tmp/bridgeport-cloudflare-test/config.yml",
+        cloudflaredPath: "/tmp/definitely-not-cloudflared-\(UUID().uuidString)"
+    )
+    let manager = CloudflareManager(settings: settings, port: 8080, bindHost: "127.0.0.1")
+
+    let status = await manager.status()
+
+    #expect(status.state == CloudflareTunnelState.missingCloudflared)
+    #expect(status.cloudflaredInstalled == false)
+    #expect(status.hostname == "mcp.amesvt.com")
 }
 
 private func temporaryDirectory() throws -> URL {

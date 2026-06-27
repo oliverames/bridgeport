@@ -12,8 +12,16 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static func initialSelection(environment: [String: String] = ProcessInfo.processInfo.environment) -> SettingsPane {
-        guard let requested = environment["BRIDGEPORT_SETTINGS_PANE"] else {
+    static func initialSelection(
+        arguments: [String] = CommandLine.arguments,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> SettingsPane {
+        let requestedFromArguments = arguments.dropFirst().compactMap { argument -> String? in
+            guard argument.hasPrefix("--open-settings=") else { return nil }
+            return argument.split(separator: "=", maxSplits: 1).last.map(String.init)
+        }.first
+
+        guard let requested = requestedFromArguments ?? environment["BRIDGEPORT_SETTINGS_PANE"] else {
             return .dashboard
         }
         let requestedIdentifier = paneIdentifier(requested)
@@ -277,40 +285,196 @@ struct SettingsView: View {
 
     private var cloudflarePane: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PaneHeader(title: "Cloudflare", subtitle: "Use Cloudflare Tunnel to route a private hostname to Bridgeport on this Mac.")
+            PaneHeader(title: "Cloudflare", subtitle: "Create and run a named Cloudflare Tunnel owned by Bridgeport, with explicit per-connector public exposure.")
 
-            SettingsGroup(title: "Tunnel") {
-                SettingsField(label: "Public Base URL") {
-                    TextField("https://mcp.amesvt.com", text: $appState.publicBaseURL)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save() } }
+            SettingsGroup(title: "Status") {
+                LabeledContent("Tunnel") {
+                    StatusValue(
+                        text: appState.cloudflareStatusText,
+                        systemImage: cloudflareStatusIcon,
+                        tint: cloudflareStatusTint
+                    )
+                }
+                Divider()
+                LabeledContent("Detail") {
+                    Text(appState.cloudflareStatus.message)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Divider()
+                LabeledContent("Public URL") {
+                    Text(appState.publicBaseURL.isEmpty ? CloudflareManager.publicBaseURL(for: appState.cloudflare) : appState.publicBaseURL)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(appState.cloudflare.hostname.isEmpty ? .secondary : .primary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            SettingsGroup(title: "Configuration") {
+                Toggle(isOn: $appState.cloudflare.enabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable Cloudflare Tunnel")
+                        Text("Bridgeport will manage a local cloudflared LaunchAgent, but connectors are exposed only when their Public toggle is on.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onChange(of: appState.cloudflare.enabled) {
+                    Task { await appState.save(restartDaemon: false); await appState.refreshCloudflareStatus() }
                 }
 
-                SettingsField(label: "Bind Host") {
-                    TextField("127.0.0.1", text: $appState.bindHost)
+                Divider()
+
+                SettingsField(label: "Profile") {
+                    TextField("Oliver Ames private", text: $appState.cloudflare.profileName)
                         .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save() } }
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "Domain") {
+                    TextField("amesvt.com", text: $appState.cloudflare.domain)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "Hostname") {
+                    TextField("mcp.amesvt.com", text: $appState.cloudflare.hostname)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            appState.publicBaseURL = CloudflareManager.publicBaseURL(for: appState.cloudflare)
+                            Task { await appState.save(restartDaemon: false) }
+                        }
+                }
+
+                SettingsField(label: "Tunnel Name") {
+                    TextField("bridgeport", text: $appState.cloudflare.tunnelName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "Tunnel ID") {
+                    TextField("Created or discovered by Bridgeport", text: $appState.cloudflare.tunnelId)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "Account ID") {
+                    TextField("Optional Cloudflare account ID", text: $appState.cloudflare.accountId)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "Zone ID") {
+                    TextField("Optional Cloudflare zone ID", text: $appState.cloudflare.zoneId)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "cloudflared") {
+                    TextField("/opt/homebrew/bin/cloudflared", text: $appState.cloudflare.cloudflaredPath)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false); await appState.refreshCloudflareStatus() } }
+                }
+
+                SettingsField(label: "Config File") {
+                    TextField("~/.config/bridgeport/cloudflared/config.yml", text: $appState.cloudflare.configFilePath)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "Credentials File") {
+                    TextField("Created by cloudflared tunnel create", text: $appState.cloudflare.credentialsFilePath)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false); await appState.refreshCloudflareStatus() } }
+                }
+
+                SettingsField(label: "Token Env Var") {
+                    TextField("CLOUDFLARE_API_TOKEN", text: $appState.cloudflare.apiTokenEnvVar)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                }
+
+                SettingsField(label: "Token op:// Ref") {
+                    SecureField("Optional op://Development/... reference", text: $appState.cloudflare.apiTokenOPReference)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
                 }
 
                 ActionGrid(minimumItemWidth: 180) {
                     Button {
-                        Task { await appState.save() }
+                        Task {
+                            appState.publicBaseURL = CloudflareManager.publicBaseURL(for: appState.cloudflare)
+                            await appState.prepareCloudflareConfiguration()
+                        }
                     } label: {
-                        Label("Save Cloudflare Settings", systemImage: "checkmark.circle")
+                        Label("Prepare Local Config", systemImage: "wrench.and.screwdriver")
                     }
+                    .disabled(!appState.cloudflare.enabled)
 
+                    Button {
+                        Task { await appState.bootstrapCloudflareTunnel() }
+                    } label: {
+                        Label("Create or Repair Tunnel", systemImage: "plus.circle")
+                    }
+                    .disabled(!appState.cloudflare.enabled || !appState.cloudflareStatus.cloudflaredInstalled)
+
+                    Button {
+                        Task { await appState.startCloudflareTunnel() }
+                    } label: {
+                        Label("Start Tunnel", systemImage: "play.circle")
+                    }
+                    .disabled(!appState.cloudflare.enabled || appState.cloudflareStatus.state == .running)
+
+                    Button {
+                        Task { await appState.stopCloudflareTunnel() }
+                    } label: {
+                        Label("Stop Tunnel", systemImage: "stop.circle")
+                    }
+                    .disabled(appState.cloudflareStatus.state != .running)
+
+                    Button {
+                        Task { await appState.restartCloudflareTunnel() }
+                    } label: {
+                        Label("Restart Tunnel", systemImage: "arrow.clockwise.circle")
+                    }
+                    .disabled(!appState.cloudflare.enabled || appState.cloudflareStatus.state == .needsTunnel)
+                }
+            }
+
+            SettingsGroup(title: "Routing") {
+                Text("Bridgeport uses one named Cloudflare Tunnel hostname and per-connector path routing. cloudflared forwards \(appState.cloudflare.hostname.isEmpty ? "the configured hostname" : appState.cloudflare.hostname) to \(appState.localBaseURL); Bridgeport serves only enabled public connectors and returns 404 for disabled or private connectors on the public hostname.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+
+                LabeledContent("Route Mode") {
+                    Text(appState.cloudflare.routeMode)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+
+                LabeledContent("Created by Bridgeport") {
+                    Text(appState.cloudflare.createdByBridgeport ? "Yes" : "No")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            SettingsGroup(title: "Reference") {
+                ActionGrid(minimumItemWidth: 180) {
                     Button {
                         openCloudflareDocs()
                     } label: {
                         Label("Open Tunnel Docs", systemImage: "safari")
                     }
-                }
-            }
 
-            SettingsGroup(title: "Routing") {
-                Text("cloudflared should forward the chosen hostname to \(appState.localBaseURL). Expose individual connectors only after enabling their Public toggle.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        copy(CloudflareManager.publicBaseURL(for: appState.cloudflare))
+                    } label: {
+                        Label("Copy Public Base URL", systemImage: "doc.on.doc")
+                    }
+                    .disabled(appState.cloudflare.hostname.isEmpty)
+                }
             }
         }
     }
@@ -585,6 +749,26 @@ struct SettingsView: View {
     private func openCloudflareDocs() {
         if let url = URL(string: "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    private var cloudflareStatusTint: Color {
+        switch appState.cloudflareStatus.state {
+        case .running: .green
+        case .error, .missingCloudflared: .red
+        case .needsTunnel, .needsConfig: .orange
+        case .disabled, .stopped: .secondary
+        }
+    }
+
+    private var cloudflareStatusIcon: String {
+        switch appState.cloudflareStatus.state {
+        case .running: "checkmark.circle.fill"
+        case .error: "exclamationmark.triangle.fill"
+        case .missingCloudflared: "questionmark.circle"
+        case .needsTunnel, .needsConfig: "wrench.and.screwdriver"
+        case .stopped: "stop.circle"
+        case .disabled: "pause.circle"
         }
     }
 

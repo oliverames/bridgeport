@@ -1,3 +1,29 @@
+## 2026-06-26 - Bridgeport 1.0.2 production connector release
+
+**What changed**: Completed the production hardening pass for Bridgeport's public YNAB connector path. Added a launchd helper for reliable daemon restarts, moved blocking process reads off Swift's cooperative executor, made 1Password local-env FIFO reads non-blocking, fixed pane-targeted settings launch routing for packaged app verification, and preserved YNAB production write capability while allowing validation runs to force read-only behavior with a temporary Bridgeport env override.
+
+**Provider verification**: Claude has one connected `ynab-mcp-server` custom connector pointed at `https://mcp.amesvt.com/mcp/ynab`; a read-only `Review unapproved` conversation returned the approval queue summary without approval, edit, category, delete, create, import, or other write actions. Mistral Vibe has one private connected `bridgeport_ynab` connector pointed at the same endpoint; read-only transaction review completed without mutation, and the function permissions leave write/interactive tools requiring approval while read-only tools are allowed. Mistral currently stores `icon_url: null` for this private custom MCP connector and exposes reconnect/disconnect only, so it renders the generic custom connector glyph; Bridgeport's `/icons/ynab` endpoint itself returns the YNAB PNG, not a Cloudflare icon.
+
+**Live verification**: The Bridgeport daemon and Cloudflare named tunnel are running for `https://mcp.amesvt.com`. Only `ynab-mcp-server` is public at `/mcp/ynab`; Apple Notes remains local/private and returns 404 on a public route. Public OAuth metadata, public icon serving, and a read-only YNAB MCP probe all pass; the public YNAB server advertises 51 tools, including write tools for production use, while the validation probe used read-only review calls only.
+
+**Release verification**: `swift test` passed 32 tests. `python3 test_client.py` passed all 11 smoke tests. The packaged settings UI opens directly to the Cloudflare pane with the tunnel running. `dist/release/Bridgeport-1.0.2.dmg` is signed, notarized, stapled, and accepted by Gatekeeper; SHA-256 is `39cc3a79d0bc3fbf36c3aff8da7d36fe6c3fc5582bb5003506630985f907b23b`.
+
+**Left off at**: No open blockers for the connector goal. This entry records the verified source and artifact state for the `v1.0.2` release.
+
+---
+
+## 2026-06-26 - Bridgeport-owned Cloudflare tunnel lifecycle checkpoint
+
+**What changed**: Added a Bridgeport-owned Cloudflare settings model, a `CloudflareManager` for named tunnel status/config/bootstrap/start/stop/restart, CLI flags for those lifecycle operations, menu bar Cloudflare status, and a full Cloudflare settings pane. Updated README, CLOUDFLARE.md, and the MCP hosting plan to document the chosen stable named-tunnel architecture, `amesvt.com` defaults, bring-your-own-Cloudflare fields, and the distinction between remote MCP endpoints and webhook compatibility endpoints.
+
+**Decisions made**: Use one production named Cloudflare Tunnel and one provider-compatible hostname, with Bridgeport enforcing per-connector enabled/public/auth/path decisions. Do not use quick tunnels as the production path. Keep Cloudflare disabled by default, preload only non-secret Oliver/private defaults, and keep Cloudflare credential material in `cloudflared` credentials, environment variables, or `op://` references rather than source or app bundle state.
+
+**Left off at**: The Cloudflare lifecycle code, docs, and focused tests are local and uncommitted. A live packaged-app check exposed that the `--open-settings=cloudflare` path did not create an accessible settings window during this run; that needs a dedicated follow-up before claiming UI acceptance. The broader 1.0 release goal remains open.
+
+**Open questions**: Finish live Cloudflare tunnel creation/start/stop/restart against the real account after credentials are confirmed. Then complete the required live Mistral and Claude YNAB read-only connector tests, logo verification, duplicate-connector checks, notarization, DMG packaging, and GitHub release.
+
+---
+
 ## 2026-06-26 - Release hardening and connector UI polish
 
 **What changed**: Hardened Bridgeport's public MCP surface, OAuth flow, local config handling, 1Password/env resolution, connector discovery, generated cloud connector exports, Mistral icon metadata, and packaged macOS UI. Added app icon assets, a pane-targeted settings launch hook for packaged UI verification, updated README/Cloudflare docs, and rebuilt the signed release-candidate DMG.

@@ -33,6 +33,10 @@ struct BridgeportApp: App {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Text("Cloudflare: \(appState.cloudflareStatusText)")
+                .font(.caption)
+                .foregroundStyle(appState.cloudflareStatus.state == .running ? .green : .secondary)
+
             Divider()
 
             Button("Open Settings") {
@@ -56,6 +60,17 @@ struct BridgeportApp: App {
                     }
                 }
             }
+
+            Button(appState.cloudflareStatus.state == .running ? "Restart Cloudflare" : "Start Cloudflare") {
+                Task {
+                    if appState.cloudflareStatus.state == .running {
+                        await appState.restartCloudflareTunnel()
+                    } else {
+                        await appState.startCloudflareTunnel()
+                    }
+                }
+            }
+            .disabled(!appState.cloudflare.enabled)
 
             Divider()
 

@@ -1,6 +1,10 @@
 import Foundation
 
 public actor ProcessBridge {
+    private static let stdoutQueue = DispatchQueue(label: "com.oliverames.bridgeport.processbridge.stdout", qos: .utility, attributes: .concurrent)
+    private static let stderrQueue = DispatchQueue(label: "com.oliverames.bridgeport.processbridge.stderr", qos: .utility, attributes: .concurrent)
+    private static let waitQueue = DispatchQueue(label: "com.oliverames.bridgeport.processbridge.wait", qos: .utility, attributes: .concurrent)
+
     private let connector: Connector
     private let env: [String: String]
     private var process: Process?
@@ -47,21 +51,22 @@ public actor ProcessBridge {
         try proc.run()
         logMessage("ProcessBridge.start: process spawned successfully (pid: \(proc.processIdentifier))")
 
-        // Start reading stdout line-by-line (runs in static/nonisolated context in detached tasks to prevent deadlocks)
-        Task.detached {
-            await Self.readStdoutLoop(pipe: stdout, onMessage: onMessage)
+        // These loops call blocking POSIX APIs, so keep them off Swift's cooperative executor.
+        Self.stdoutQueue.async {
+            Self.readStdoutLoop(pipe: stdout, onMessage: onMessage)
         }
 
         // Drain stderr so subprocesses cannot block on a full pipe. Connector stderr may contain
         // credentials, so Bridgeport intentionally does not persist the contents.
-        Task.detached {
-            await Self.drainStderrLoop(pipe: stderr)
+        Self.stderrQueue.async {
+            Self.drainStderrLoop(pipe: stderr)
         }
 
-        // Wait for exit (runs in a detached task off the actor context to prevent blocking)
-        Task.detached { [weak self] in
+        Self.waitQueue.async { [weak self] in
             proc.waitUntilExit()
-            await self?.handleExit()
+            Task {
+                await self?.handleExit()
+            }
         }
     }
 
@@ -103,13 +108,12 @@ public actor ProcessBridge {
         onExit?()
     }
 
-    private static func readStdoutLoop(pipe: Pipe, onMessage: @escaping @Sendable (String) -> Void) async {
+    private static func readStdoutLoop(pipe: Pipe, onMessage: @escaping @Sendable (String) -> Void) {
         let fd = pipe.fileHandleForReading.fileDescriptor
         var buffer = Data()
         var tempBuffer = [UInt8](repeating: 0, count: 4096)
 
         while true {
-            logMessage("ProcessBridge.readStdoutLoop: calling POSIX read")
             let bytesRead = read(fd, &tempBuffer, tempBuffer.count)
             if bytesRead <= 0 {
                 logMessage("ProcessBridge.readStdoutLoop: POSIX read returned \(bytesRead) (EOF or error)")
@@ -137,7 +141,7 @@ public actor ProcessBridge {
         [connector.command] + connector.args
     }
 
-    private static func drainStderrLoop(pipe: Pipe) async {
+    private static func drainStderrLoop(pipe: Pipe) {
         let fd = pipe.fileHandleForReading.fileDescriptor
         var tempBuffer = [UInt8](repeating: 0, count: 4096)
 

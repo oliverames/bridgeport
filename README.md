@@ -30,12 +30,14 @@ graph LR
 
     subgraph Clients["MCP clients"]
         Codex["Codex"]
-        Claude["Claude Code"]
+        Claude["Claude app"]
+        Mistral["Mistral Work/Vibe"]
         Other["Other HTTP MCP clients"]
     end
 
     Codex -->|"Authorization: Bearer ..."| Daemon
-    Claude -->|"Cloudflare Tunnel"| Daemon
+    Claude -->|"OAuth via Cloudflare Tunnel"| Daemon
+    Mistral -->|"Bearer via Cloudflare Tunnel"| Daemon
     Other -->|"Streamable HTTP"| Daemon
 ```
 
@@ -120,12 +122,12 @@ Bridgeport stores its config at `~/.config/bridgeport/config.json`.
     "/Users/oliverames/.codex/config.toml"
   ],
   "connectorSettings": {
-    "apple-notes": {
+    "ynab-mcp-server": {
       "enabled": true,
       "exposePublicly": true,
-      "publicPath": "apple-notes"
+      "publicPath": "ynab"
     },
-    "node_repl": {
+    "apple-notes": {
       "enabled": true,
       "exposePublicly": false
     }
@@ -137,8 +139,26 @@ Bridgeport stores its config at `~/.config/bridgeport/config.json`.
     "environmentId": "",
     "localEnvFilePath": "~/.config/bridgeport/1password.env"
   },
+  "cloudflare": {
+    "enabled": true,
+    "profileName": "Oliver Ames private",
+    "accountId": "",
+    "zoneId": "",
+    "domain": "amesvt.com",
+    "hostname": "mcp.amesvt.com",
+    "tunnelName": "bridgeport",
+    "tunnelId": "",
+    "credentialsFilePath": "",
+    "configFilePath": "~/.config/bridgeport/cloudflared/config.yml",
+    "cloudflaredPath": "/opt/homebrew/bin/cloudflared",
+    "launchAgentLabel": "com.oliverames.bridgeport.cloudflared",
+    "routeMode": "single-hostname-path-routing",
+    "apiTokenEnvVar": "CLOUDFLARE_API_TOKEN",
+    "apiTokenOPReference": "",
+    "createdByBridgeport": false
+  },
   "env": {
-    "YNAB_API_TOKEN": "op://Development/YNAB/api-token"
+    "YNAB_API_TOKEN": "op://Development/<item>/<field>"
   }
 }
 ```
@@ -152,9 +172,9 @@ Bridgeport writes enabled connectors to `~/.config/bridgeport/mcp_config.json`.
 ```json
 {
   "mcpServers": {
-    "apple-notes": {
+    "ynab-mcp-server": {
       "type": "http",
-      "url": "https://mcp.amesvt.com/mcp/apple-notes",
+      "url": "https://mcp.amesvt.com/mcp/ynab",
       "headers": {
         "Authorization": "Bearer ames_..."
       }
@@ -171,6 +191,8 @@ Bridgeport writes public connector exports to `~/.config/bridgeport/cloud_connec
 
 ChatGPT custom apps, Claude custom connectors, and Mistral custom connectors are reached from cloud infrastructure, not from this Mac. Set `publicBaseURL` to a Cloudflare Tunnel hostname, keep `allowQueryTokenAuth` off, and expose only the connectors you intend to make public.
 
+Oliver's current private deployment exposes `ynab-mcp-server` at `https://mcp.amesvt.com/mcp/ynab`. Apple Notes is discovered and available locally, but it is not exposed publicly unless the Public toggle is deliberately enabled.
+
 Claude custom connectors use Bridgeport's built-in OAuth 2.1 authorization-code flow with PKCE and dynamic client registration. The remote MCP URL is the normal endpoint, for example `https://mcp.example.com/mcp/ynab`; Claude discovers Bridgeport's authorization and token endpoints from the protected-resource metadata advertised on 401 responses. The Bridgeport approval page requires the Bridgeport token before it issues an OAuth authorization code, so keep the public hostname behind Cloudflare Access or equivalent policy and treat that token as a secret.
 
 ChatGPT custom apps currently require an OAuth front door for production. Bridgeport exports a query-token URL only when fallback is explicitly enabled, otherwise it copies the normal MCP URL and marks the ChatGPT entry as not ready.
@@ -180,8 +202,8 @@ Anthropic Messages API MCP connector definitions use `authorization_token`, so t
 ```json
 {
   "type": "url",
-  "name": "apple-notes",
-  "url": "https://mcp.amesvt.com/mcp/apple-notes",
+  "name": "ynab-mcp-server",
+  "url": "https://mcp.amesvt.com/mcp/ynab",
   "authorization_token": "ames_..."
 }
 ```
@@ -189,8 +211,8 @@ Anthropic Messages API MCP connector definitions use `authorization_token`, so t
 Mistral Work/Vibe custom connectors can use the same public MCP URL and select or auto-detect HTTP Bearer Token auth in the UI:
 
 ```text
-Name: apple-notes
-Server URL: https://mcp.amesvt.com/mcp/apple-notes
+Name: bridgeport_ynab
+Server URL: https://mcp.amesvt.com/mcp/ynab
 Authentication: HTTP Bearer Token
 Authorization header: Bearer ames_...
 ```
@@ -201,9 +223,9 @@ Vibe Code CLI can use the generated TOML:
 
 ```toml
 [[mcp_servers]]
-name = "apple-notes"
+name = "ynab-mcp-server"
 transport = "streamable-http"
-url = "https://mcp.amesvt.com/mcp/apple-notes"
+url = "https://mcp.amesvt.com/mcp/ynab"
 headers = { "Authorization" = "Bearer ames_..." }
 ```
 
@@ -216,6 +238,8 @@ Provider authentication summary:
 | Anthropic Messages API | `authorization_token` | Exports header-style bearer auth without URL tokens |
 | Mistral Work/Vibe custom connectors | HTTP Bearer Token | Exports server URL plus `Bearer <token>` |
 | Vibe Code CLI | Authorization header in TOML | Exports `streamable-http` TOML with bearer header |
+
+Before creating a provider connector, search the provider's connector list for existing Bridgeport entries and remove or reuse stale test entries. Keep exactly one Bridgeport connector per exposed MCP in each provider. Do not create Bridgeport duplicates for HTML/web-native connectors that already have hosted provider integrations.
 
 ## Import vs Mirror
 
@@ -243,6 +267,18 @@ Connector processes receive environment values in this order. User-owned values 
 Values can reference earlier user-owned environment variables with `${NAME}` and can use `op://` references. Bridgeport resolves `op://` values with the 1Password CLI (`op read`) at connector start, but only for variables the connector declares or references. Unused `op://` entries are not resolved or injected into unrelated connector processes, and each 1Password CLI read has a timeout so a locked vault cannot stall connector startup indefinitely.
 
 The 1Password settings pane stores metadata for the Environment plus the local mounted `.env` path. It does not create or mutate a 1Password Environment itself.
+Mounted 1Password local env destinations are read as regular dotenv files or nonblocking FIFO mounts, so a temporarily inactive 1Password mount cannot stall connector startup.
+
+## Safe YNAB Validation
+
+`ynab-mcp-server` is Bridgeport's primary live test connector because it proves hosted MCP access without requiring Apple Notes data to leave the Mac. Production YNAB remains read/write-capable when the source connector enables writes, but release validation must stay read-only.
+
+For safe testing:
+
+1. Use read-only tools such as `review_unapproved` with `summary: true`.
+2. Do not call tools that create, update, approve, categorize, import, delete, or otherwise mutate YNAB data.
+3. If a temporary validation run needs a hard read-only guard, set `YNAB_ALLOW_WRITES=0` in Bridgeport's config env for that run, then remove the override before reconnecting production providers.
+4. Confirm provider conversations can list transactions needing approval, then stop. Do not approve or edit them from the provider chat.
 
 ## Endpoints
 
@@ -297,9 +333,18 @@ Bridgeport advertises icon metadata in MCP `initialize` responses with `serverIn
 
 ## Cloudflare
 
-Bridgeport should bind to `127.0.0.1` when exposed through Cloudflare Tunnel. Point the tunnel hostname, for example `mcp.amesvt.com`, at `http://localhost:<port>`, then set `publicBaseURL` to that hostname in Bridgeport.
+Bridgeport owns the local Cloudflare Tunnel lifecycle. The Cloudflare settings pane stores non-secret account metadata, a hostname such as `mcp.amesvt.com`, the named tunnel, the local `cloudflared` path, and Bridgeport's generated `cloudflared` config path. Secrets stay outside the app bundle and repository: use `cloudflared tunnel login`, a local credentials file, a tunnel token, environment variables, or `op://` references.
 
-Expose connectors individually with their **Public** toggle. The generated client config uses the public base URL only for connectors marked public.
+The production shape is a named tunnel with one hostname and Bridgeport path routing:
+
+- `cloudflared` forwards `https://mcp.amesvt.com` to `http://127.0.0.1:<port>`.
+- Bridgeport serves `/mcp/<connector>` only when that connector is enabled.
+- Public-host requests for private or disabled connectors return unavailable rather than reaching the local MCP process.
+- Generated connector URLs and Mistral `icon_url` values use Bridgeport metadata, not Cloudflare branding.
+
+Use **Prepare Local Config** to write `~/.config/bridgeport/cloudflared/config.yml` and `~/Library/LaunchAgents/com.oliverames.bridgeport.cloudflared.plist` without creating DNS records. Use **Create or Repair Tunnel** after `cloudflared tunnel login` or equivalent credentials are available; Bridgeport will reuse an existing named tunnel when it can, create one only when needed, route the configured hostname, and start the LaunchAgent.
+
+Expose connectors individually with their **Public** toggle. The generated client config uses the public base URL only for connectors marked public, and `cloud_connectors.json` includes only enabled public connectors.
 
 See [CLOUDFLARE.md](CLOUDFLARE.md) for tunnel setup and security recommendations.
 
@@ -318,11 +363,18 @@ See [CLOUDFLARE.md](CLOUDFLARE.md) for tunnel setup and security recommendations
 | `--daemon-uninstall` | Stop and remove LaunchAgent |
 | `--daemon-status` | Print LaunchAgent status |
 | `--rotate-token` | Generate and save a new master token |
+| `--cloudflare-status` | Print Bridgeport-managed Cloudflare tunnel status |
+| `--cloudflare-prepare` | Write local cloudflared config and LaunchAgent |
+| `--cloudflare-bootstrap` | Create or reuse the named tunnel, route DNS, and start it |
+| `--cloudflare-start` | Start the Bridgeport cloudflared LaunchAgent |
+| `--cloudflare-stop` | Stop the Bridgeport cloudflared LaunchAgent |
+| `--cloudflare-restart` | Restart the Bridgeport cloudflared LaunchAgent |
 
 ## Requirements
 
 - macOS 26 Tahoe
 - Swift 6.2+
+- `cloudflared` for public connector exposure through Cloudflare Tunnel
 - 1Password CLI for `op://` secret resolution
 - FlyingFox, via SwiftPM
 - Developer ID Application certificate for signed DMG releases

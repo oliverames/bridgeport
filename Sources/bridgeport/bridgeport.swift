@@ -32,8 +32,7 @@ func runShell(_ executable: String, _ arguments: [String]) -> (status: Int32, st
 }
 
 func isServiceLoaded(label: String, uid: uid_t) -> Bool {
-    let result = runShell("/bin/launchctl", ["print", "gui/\(uid)/\(label)"])
-    return result.status == 0
+    LaunchAgentManager.isLoaded(label: label, uid: uid)
 }
 
 @main
@@ -111,6 +110,24 @@ struct bridgeport {
             case "--rotate-token":
                 daemonAction = "rotate-token"
                 i += 1
+            case "--cloudflare-status":
+                daemonAction = "cloudflare-status"
+                i += 1
+            case "--cloudflare-prepare":
+                daemonAction = "cloudflare-prepare"
+                i += 1
+            case "--cloudflare-bootstrap":
+                daemonAction = "cloudflare-bootstrap"
+                i += 1
+            case "--cloudflare-start":
+                daemonAction = "cloudflare-start"
+                i += 1
+            case "--cloudflare-stop":
+                daemonAction = "cloudflare-stop"
+                i += 1
+            case "--cloudflare-restart":
+                daemonAction = "cloudflare-restart"
+                i += 1
             case "--port":
                 if i + 1 < args.count, let p = UInt16(args[i+1]) {
                     port = p
@@ -158,7 +175,7 @@ struct bridgeport {
                 i += 1
             default:
                 print("Unknown argument: \(args[i])")
-                print("Usage: bridgeport [--server] [--port <port>] [--token <token>] [--connectors-path <path>] [--public-base-url <url>] [--bind-host <host>] [--allow-query-token-auth] [--daemon-install] [--daemon-uninstall] [--daemon-status] [--rotate-token]")
+                print("Usage: bridgeport [--server] [--port <port>] [--token <token>] [--connectors-path <path>] [--public-base-url <url>] [--bind-host <host>] [--allow-query-token-auth] [--daemon-install] [--daemon-uninstall] [--daemon-status] [--rotate-token] [--cloudflare-status|--cloudflare-prepare|--cloudflare-bootstrap|--cloudflare-start|--cloudflare-stop|--cloudflare-restart]")
                 exit(1)
             }
         }
@@ -184,7 +201,7 @@ struct bridgeport {
 
                 if isServiceLoaded(label: "com.oliverames.bridgeport", uid: uid) {
                     print("  Stopping existing daemon...")
-                    _ = runShell("/bin/launchctl", ["bootout", "gui/\(uid)/com.oliverames.bridgeport"])
+                    LaunchAgentManager.bootout(label: "com.oliverames.bridgeport", uid: uid, plistURL: plistURL)
                 }
 
                 do {
@@ -223,7 +240,7 @@ struct bridgeport {
                     exit(1)
                 }
 
-                let result = runShell("/bin/launchctl", ["bootstrap", "gui/\(uid)", plistURL.path])
+                let result = LaunchAgentManager.bootstrap(label: "com.oliverames.bridgeport", uid: uid, plistURL: plistURL)
                 if result.status == 0 {
                     print("Successfully installed and started Bridgeport daemon!")
                 } else {
@@ -238,10 +255,7 @@ struct bridgeport {
 
                 if isServiceLoaded(label: "com.oliverames.bridgeport", uid: uid) {
                     print("  Stopping daemon...")
-                    let result = runShell("/bin/launchctl", ["bootout", "gui/\(uid)/com.oliverames.bridgeport"])
-                    if result.status != 0 {
-                        _ = runShell("/bin/launchctl", ["bootout", "gui/\(uid)", plistURL.path])
-                    }
+                    _ = LaunchAgentManager.bootout(label: "com.oliverames.bridgeport", uid: uid, plistURL: plistURL)
                 }
 
                 if fileManager.fileExists(atPath: plistURL.path) {
@@ -272,8 +286,7 @@ struct bridgeport {
 
                 if isServiceLoaded(label: "com.oliverames.bridgeport", uid: uid) {
                     print("Restarting daemon to apply changes...")
-                    _ = runShell("/bin/launchctl", ["bootout", "gui/\(uid)/com.oliverames.bridgeport"])
-                    let result = runShell("/bin/launchctl", ["bootstrap", "gui/\(uid)", plistURL.path])
+                    let result = LaunchAgentManager.restart(label: "com.oliverames.bridgeport", uid: uid, plistURL: plistURL)
                     if result.status == 0 {
                         print("Daemon restarted successfully.")
                     } else {
@@ -282,6 +295,55 @@ struct bridgeport {
                 }
                 exit(0)
 
+            case "cloudflare-status", "cloudflare-prepare", "cloudflare-bootstrap", "cloudflare-start", "cloudflare-stop", "cloudflare-restart":
+                let manager = CloudflareManager(
+                    settings: config.cloudflare ?? ConfigManager.defaultCloudflareSettings(),
+                    port: port,
+                    bindHost: bindHost
+                )
+                let operationResult: CloudflareOperationResult?
+                let status: CloudflareTunnelStatus
+
+                switch action {
+                case "cloudflare-prepare":
+                    operationResult = await manager.prepareLocalConfiguration()
+                    status = operationResult!.status
+                case "cloudflare-bootstrap":
+                    operationResult = await manager.bootstrapTunnel()
+                    status = operationResult!.status
+                case "cloudflare-start":
+                    operationResult = nil
+                    status = await manager.startTunnel()
+                case "cloudflare-stop":
+                    operationResult = nil
+                    status = await manager.stopTunnel()
+                case "cloudflare-restart":
+                    operationResult = nil
+                    status = await manager.restartTunnel()
+                default:
+                    operationResult = nil
+                    status = await manager.status()
+                }
+
+                if let operationResult, operationResult.didChangeSettings {
+                    config.cloudflare = operationResult.settings
+                    config.publicBaseURL = CloudflareManager.publicBaseURL(for: operationResult.settings)
+                    config.allowedOrigins = ConfigManager.defaultAllowedOrigins(port: port, publicBaseURL: config.publicBaseURL)
+                    await configManager.save(config)
+                }
+
+                print("Bridgeport Cloudflare Status:")
+                print("  - State:              \(status.state.rawValue)")
+                print("  - Message:            \(status.message)")
+                print("  - cloudflared:        \(status.cloudflaredInstalled ? "Yes (\(status.cloudflaredPath))" : "No (\(status.cloudflaredPath))")")
+                print("  - Config file:        \(status.configFileExists ? "Yes (\(status.configFilePath))" : "No (\(status.configFilePath))")")
+                print("  - Credentials file:   \(status.credentialsFileExists ? "Yes (\(status.credentialsFilePath))" : "No")")
+                print("  - LaunchAgent:        \(status.launchAgentInstalled ? "Yes (\(status.launchAgentLabel))" : "No (\(status.launchAgentLabel))")")
+                print("  - Service loaded:     \(status.launchAgentRunning ? "Yes (Running)" : "No")")
+                print("  - Hostname:           \(status.hostname.isEmpty ? "Not configured" : status.hostname)")
+                print("  - Public base URL:    \(status.publicBaseURL.isEmpty ? "Not configured" : status.publicBaseURL)")
+                exit(status.state == .error || status.state == .missingCloudflared ? 1 : 0)
+
             default:
                 break
             }
@@ -289,7 +351,7 @@ struct bridgeport {
 
         if !isServerMode {
             print("Error: --server is required for command-line server mode.")
-            print("Usage: bridgeport [--server] [--port <port>] [--token <token>] [--connectors-path <path>] [--public-base-url <url>] [--bind-host <host>] [--allow-query-token-auth] [--daemon-install] [--daemon-uninstall] [--daemon-status] [--rotate-token]")
+            print("Usage: bridgeport [--server] [--port <port>] [--token <token>] [--connectors-path <path>] [--public-base-url <url>] [--bind-host <host>] [--allow-query-token-auth] [--daemon-install] [--daemon-uninstall] [--daemon-status] [--rotate-token] [--cloudflare-status|--cloudflare-prepare|--cloudflare-bootstrap|--cloudflare-start|--cloudflare-stop|--cloudflare-restart]")
             exit(1)
         }
 

@@ -4,6 +4,8 @@
 
 Bridgeport is a personal MCP gateway for Mac-local and self-hosted-only connectors. The release-candidate scope is focused on Oliver's own always-on Mac and private domains, but the app is structured as if it could be cleaned up for public release later.
 
+Bridgeport's primary provider-facing surface is not a generic webhook. Provider setup should be described as authenticated remote MCP over Streamable HTTP, with legacy SSE support where a provider still needs it. The webhook route remains a connector-specific compatibility endpoint for integrations that send inbound events.
+
 Bridgeport should host:
 
 - MCP servers that need macOS app data or local automation, for example `apple-notes-mcp`.
@@ -47,6 +49,8 @@ Bridgeport should not host:
 - Anthropic Messages API MCP server definitions using `authorization_token`.
 - Mistral Work custom connector details using HTTP Bearer Token auth.
 - Vibe Code CLI TOML snippets using `streamable-http` plus `Authorization` headers.
+- Bridgeport-owned Cloudflare settings with safe non-secret defaults for Oliver's private `amesvt.com` route and editable bring-your-own-Cloudflare fields.
+- Bridgeport-managed named Cloudflare Tunnel lifecycle through `cloudflared`, including local config generation, LaunchAgent installation, status, create or repair, start, stop, and restart controls.
 - 1Password support through:
   - Mounted 1Password Environment `.env` file.
   - `op://` reference resolution through the 1Password CLI.
@@ -76,9 +80,14 @@ Primary file: `~/.config/bridgeport/config.json`.
   ],
   "importedConnectors": {},
   "connectorSettings": {
-    "apple-notes": {
+    "ynab-mcp-server": {
       "enabled": true,
       "exposePublicly": true,
+      "publicPath": "ynab"
+    },
+    "apple-notes": {
+      "enabled": true,
+      "exposePublicly": false,
       "publicPath": "apple-notes"
     }
   },
@@ -89,8 +98,26 @@ Primary file: `~/.config/bridgeport/config.json`.
     "environmentId": "",
     "localEnvFilePath": "~/.config/bridgeport/1password.env"
   },
+  "cloudflare": {
+    "enabled": false,
+    "profileName": "Oliver Ames private",
+    "accountId": "",
+    "zoneId": "",
+    "domain": "amesvt.com",
+    "hostname": "mcp.amesvt.com",
+    "tunnelName": "bridgeport",
+    "tunnelId": "",
+    "credentialsFilePath": "",
+    "configFilePath": "~/.config/bridgeport/cloudflared/config.yml",
+    "cloudflaredPath": "/opt/homebrew/bin/cloudflared",
+    "launchAgentLabel": "com.oliverames.bridgeport.cloudflared",
+    "routeMode": "single-hostname-path-routing",
+    "apiTokenEnvVar": "CLOUDFLARE_API_TOKEN",
+    "apiTokenOPReference": "",
+    "createdByBridgeport": false
+  },
   "env": {
-    "YNAB_API_TOKEN": "op://Development/YNAB/api-token"
+    "YNAB_API_TOKEN": "op://Development/<item>/<field>"
   }
 }
 ```
@@ -100,9 +127,9 @@ Generated file: `~/.config/bridgeport/mcp_config.json`.
 ```json
 {
   "mcpServers": {
-    "apple-notes": {
+    "ynab-mcp-server": {
       "type": "http",
-      "url": "https://mcp.amesvt.com/mcp/apple-notes",
+      "url": "https://mcp.amesvt.com/mcp/ynab",
       "headers": {
         "Authorization": "Bearer ames_..."
       }
@@ -117,23 +144,23 @@ Generated file: `~/.config/bridgeport/cloud_connectors.json`.
 {
   "claudeCustomConnectors": [
     {
-      "name": "apple-notes",
-      "remoteMCPServerURL": "https://mcp.amesvt.com/mcp/apple-notes",
-      "readyForClaudeApp": false
+      "name": "ynab-mcp-server",
+      "remoteMCPServerURL": "https://mcp.amesvt.com/mcp/ynab",
+      "readyForClaudeApp": true
     }
   ],
   "anthropicMessagesAPIMCPServers": [
     {
       "type": "url",
-      "name": "apple-notes",
-      "url": "https://mcp.amesvt.com/mcp/apple-notes",
+      "name": "ynab-mcp-server",
+      "url": "https://mcp.amesvt.com/mcp/ynab",
       "authorization_token": "ames_..."
     }
   ],
   "mistralCustomConnectors": [
     {
-      "name": "apple-notes",
-      "serverURL": "https://mcp.amesvt.com/mcp/apple-notes",
+      "name": "bridgeport_ynab",
+      "serverURL": "https://mcp.amesvt.com/mcp/ynab",
       "authenticationMethod": "HTTP Bearer Token"
     }
   ]
@@ -145,16 +172,24 @@ Generated file: `~/.config/bridgeport/cloud_connectors.json`.
 Recommended personal deployment:
 
 - Bridgeport daemon listens on `127.0.0.1:<port>`.
-- `cloudflared` routes `mcp.amesvt.com` to `http://localhost:<port>`.
+- Bridgeport owns a named Cloudflare Tunnel, by default named `bridgeport`.
+- Bridgeport writes `~/.config/bridgeport/cloudflared/config.yml`.
+- Bridgeport writes `~/Library/LaunchAgents/com.oliverames.bridgeport.cloudflared.plist` for the tunnel process.
+- `cloudflared` routes `mcp.amesvt.com` to `http://127.0.0.1:<port>`.
 - Bridgeport validates `Authorization: Bearer <token>`.
 - Bridgeport advertises `WWW-Authenticate: Bearer` for unauthenticated requests so remote connector platforms can detect Bearer auth.
-- Cloudflare Access and WAF rules restrict who can call the hostname and which paths/methods are allowed.
+- Cloudflare Access and WAF rules can further restrict who can call the hostname and which paths/methods are allowed.
 - Public connector URLs are generated from `publicBaseURL` only when a connector's Public toggle is enabled.
+- Bridgeport returns unavailable responses for disabled, private, or unknown connectors even when the Cloudflare hostname still routes to Bridgeport.
+- Bridgeport reuses an existing tunnel with the configured name, creates a tunnel only when none exists, and reruns DNS route setup idempotently.
+
+The chosen Cloudflare model is a stable named tunnel plus a DNS route for one provider-compatible hostname. Cloudflare Workers are not required for the release-candidate architecture because Bridgeport already performs MCP routing, token enforcement, connector metadata, and icon serving locally. Quick tunnels are for temporary development only and are not the production path.
+
+The route mode is intentionally `single-hostname-path-routing`: Cloudflare forwards the hostname to Bridgeport, while Bridgeport enforces per-connector enabled, public, auth, and path decisions. This avoids creating one Cloudflare DNS record per connector and prevents Cloudflare endpoint state from overriding connector identity or icons.
 
 Example endpoints:
 
-- `https://mcp.amesvt.com/mcp/apple-notes`
-- `https://mcp.amesvt.com/mcp/ynab-mcp-server`
+- `https://mcp.amesvt.com/mcp/ynab`
 - `https://mcp.amesvt.com/ynab-mcp-server/webhook`
 - `https://mcp.amesvt.com/status`
 
@@ -172,13 +207,16 @@ Release-candidate defaults:
 - Default Bridgeport env values are seeded from the canonical `~/.claude/.env` `op://` map, not plaintext Claude settings values.
 - Public exposure requires a per-connector toggle.
 - URL-only web-hosted MCPs are skipped.
+- Cloudflare is disabled by default and must be explicitly enabled before Bridgeport writes tunnel config or exposes public connector URLs.
+- Cloudflare credential material is not stored in source control or the app bundle. Use `cloudflared tunnel login`, a local credentials file, environment variables, or `op://` references.
+- Cloudflare tunnel logs are written under Bridgeport's config directory and should stay at warning verbosity.
 
 Still worth considering after RC:
 
 - Per-connector token scopes.
 - Keychain storage for the Bridgeport master token.
 - Built-in 1Password Environment creation through the 1Password MCP tools.
-- Cloudflare Access policy scaffolding.
+- Cloudflare Access policy scaffolding through the Cloudflare API.
 - Signed and notarized distribution.
 
 ## Comparable Products And Patterns

@@ -11,7 +11,7 @@ final class SettingsWindowCoordinator: NSObject {
 
     func configure(appState: AppState) {
         self.appState = appState
-        guard ProcessInfo.processInfo.environment["BRIDGEPORT_OPEN_SETTINGS"] == "1" else { return }
+        guard Self.launchRequestedSettingsWindow() else { return }
         DispatchQueue.main.async { [weak self] in
             self?.openSettingsIfRequested()
         }
@@ -54,7 +54,7 @@ final class SettingsWindowCoordinator: NSObject {
 
     func openSettingsIfRequested() {
         guard !didHandleOpenSettingsLaunchRequest else { return }
-        guard ProcessInfo.processInfo.environment["BRIDGEPORT_OPEN_SETTINGS"] == "1" else { return }
+        guard Self.launchRequestedSettingsWindow() else { return }
         guard appState != nil else { return }
         didHandleOpenSettingsLaunchRequest = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
@@ -64,6 +64,16 @@ final class SettingsWindowCoordinator: NSObject {
 
     @objc private func openSettingsFromMenu(_ sender: Any?) {
         openSettingsWindow()
+    }
+
+    private static func launchRequestedSettingsWindow(arguments: [String] = CommandLine.arguments) -> Bool {
+        if ProcessInfo.processInfo.environment["BRIDGEPORT_OPEN_SETTINGS"] == "1" {
+            return true
+        }
+
+        return arguments.dropFirst().contains { argument in
+            argument == "--open-settings" || argument.hasPrefix("--open-settings=")
+        }
     }
 }
 
