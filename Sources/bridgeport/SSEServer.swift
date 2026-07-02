@@ -6,9 +6,9 @@ public struct StreamSequence: AsyncBufferedSequence, Sendable {
     public typealias Element = UInt8
     public typealias AsyncIterator = Iterator
 
-    private let stream: AsyncStream<UInt8>
+    private let stream: AsyncStream<[UInt8]>
 
-    public init(stream: AsyncStream<UInt8>) {
+    public init(stream: AsyncStream<[UInt8]>) {
         self.stream = stream
     }
 
@@ -20,20 +20,42 @@ public struct StreamSequence: AsyncBufferedSequence, Sendable {
         public typealias Element = UInt8
         public typealias Buffer = [UInt8]
 
-        private var iterator: AsyncStream<UInt8>.Iterator
+        private var iterator: AsyncStream<[UInt8]>.Iterator
+        private var pending: [UInt8] = []
+        private var pendingIndex = 0
 
-        public init(iterator: AsyncStream<UInt8>.Iterator) {
+        public init(iterator: AsyncStream<[UInt8]>.Iterator) {
             self.iterator = iterator
         }
 
         public mutating func next() async -> UInt8? {
-            await iterator.next()
+            if pendingIndex < pending.count {
+                let byte = pending[pendingIndex]
+                pendingIndex += 1
+                return byte
+            }
+            while let chunk = await iterator.next() {
+                guard !chunk.isEmpty else { continue }
+                pending = chunk
+                pendingIndex = 1
+                return chunk[0]
+            }
+            return nil
         }
 
         public mutating func nextBuffer(suggested count: Int) async throws -> [UInt8]? {
             guard count > 0 else { return [] }
-            guard let first = await iterator.next() else { return nil }
-            return [first]
+            if pendingIndex < pending.count {
+                let chunk = Array(pending[pendingIndex...])
+                pending = []
+                pendingIndex = 0
+                return chunk
+            }
+            while let chunk = await iterator.next() {
+                guard !chunk.isEmpty else { continue }
+                return chunk
+            }
+            return nil
         }
     }
 }
@@ -94,10 +116,11 @@ public actor BridgeSession {
 
     private let bridge: ProcessBridge
     private let icon: BridgeportIconMetadata?
-    private var streams: [String: AsyncStream<UInt8>.Continuation] = [:]
-    private var responseStreams: [String: AsyncStream<UInt8>.Continuation] = [:]
+    private var streams: [String: AsyncStream<[UInt8]>.Continuation] = [:]
+    private var responseStreams: [String: AsyncStream<[UInt8]>.Continuation] = [:]
     private var onClose: (@Sendable () -> Void)?
     private var isClosed = false
+    private var lastActivityAt = Date()
 
     public init(id: String, connectorName: String, bridge: ProcessBridge, icon: BridgeportIconMetadata? = nil) {
         self.id = id
@@ -122,10 +145,11 @@ public actor BridgeSession {
         )
     }
 
-    public func addPersistentStream(initialEvents: [String] = []) -> (String, AsyncStream<UInt8>) {
+    public func addPersistentStream(initialEvents: [String] = []) -> (String, AsyncStream<[UInt8]>) {
         let streamId = UUID().uuidString.lowercased()
-        let (stream, continuation) = AsyncStream<UInt8>.makeStream()
+        let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
         streams[streamId] = continuation
+        lastActivityAt = Date()
         continuation.onTermination = { @Sendable [weak self] _ in
             Task {
                 await self?.removePersistentStream(id: streamId)
@@ -140,18 +164,28 @@ public actor BridgeSession {
     public func removePersistentStream(id: String) {
         if let continuation = streams.removeValue(forKey: id) {
             continuation.finish()
+            lastActivityAt = Date()
         }
     }
 
-    public func responseStream(for requestId: String) -> AsyncStream<UInt8> {
-        let (stream, continuation) = AsyncStream<UInt8>.makeStream()
+    public func responseStream(for requestId: String) -> AsyncStream<[UInt8]> {
+        let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
         responseStreams[requestId] = continuation
+        lastActivityAt = Date()
         continuation.onTermination = { @Sendable [weak self] _ in
             Task {
                 await self?.removeResponseStream(id: requestId)
             }
         }
         return stream
+    }
+
+    /// True when the session has no open client streams and has seen no
+    /// traffic for longer than `interval`, so its connector subprocess can
+    /// be reclaimed safely. Clients that reuse the session id after a reap
+    /// receive 404 and re-initialize per the Streamable HTTP spec.
+    public func isIdle(olderThan interval: TimeInterval, now: Date = Date()) -> Bool {
+        streams.isEmpty && responseStreams.isEmpty && now.timeIntervalSince(lastActivityAt) > interval
     }
 
     public func sendNotification(_ message: String) {
@@ -162,6 +196,7 @@ public actor BridgeSession {
     }
 
     public func writeToSubprocess(_ message: String) async {
+        lastActivityAt = Date()
         await bridge.write(message)
     }
 
@@ -190,6 +225,7 @@ public actor BridgeSession {
     }
 
     private func routeMessage(_ message: String) {
+        lastActivityAt = Date()
         let routedMessage = Self.messageWithBridgeportIconMetadata(message, icon: icon)
         let event = Self.sseMessageEvent(routedMessage)
         if let requestId = Self.jsonRPCID(from: routedMessage),
@@ -238,11 +274,8 @@ public actor BridgeSession {
         return encodedString
     }
 
-    private func write(_ event: String, to continuation: AsyncStream<UInt8>.Continuation) {
-        guard let data = event.data(using: .utf8) else { return }
-        for byte in data {
-            continuation.yield(byte)
-        }
+    private func write(_ event: String, to continuation: AsyncStream<[UInt8]>.Continuation) {
+        continuation.yield(Array(event.utf8))
     }
 
     public static func sseMessageEvent(_ message: String) -> String {
@@ -269,7 +302,10 @@ public actor SSEServer {
     public init(config: BridgeportConfig, manager: ConnectorManager, oauthStore: OAuthTokenStore? = nil) {
         self.config = config
         self.manager = manager
-        self.oauthStore = oauthStore ?? OAuthTokenStore(clientRegistryURL: BridgeportPaths.oauthClientRegistryURL())
+        self.oauthStore = oauthStore ?? OAuthTokenStore(
+            clientRegistryURL: BridgeportPaths.oauthClientRegistryURL(),
+            accessTokenStoreURL: BridgeportPaths.oauthAccessTokenStoreURL()
+        )
     }
 
     public init(port: UInt16, token: String, manager: ConnectorManager, disabledConnectors: [String] = []) {
@@ -459,7 +495,27 @@ public actor SSEServer {
 
         await server.appendRoute("*", to: handler)
         logMessage("Bridgeport Server starting on \(bindHost):\(port)")
+
+        // Reap sessions whose clients disconnected or went silent so
+        // connector subprocesses do not accumulate indefinitely.
+        let reaper = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                await self?.reapIdleSessions()
+            }
+        }
+        defer { reaper.cancel() }
+
         try await server.run()
+    }
+
+    private func reapIdleSessions() async {
+        for (id, session) in sessions {
+            guard await session.isIdle(olderThan: Self.sessionIdleTimeout) else { continue }
+            logMessage("SSEServer: Closing idle session \(id) for \(session.connectorName)")
+            sessions.removeValue(forKey: id)
+            await session.close(callOnClose: false)
+        }
     }
 
     private func makeHTTPServer(bindHost: String, port: UInt16) throws -> HTTPServer {
@@ -743,7 +799,7 @@ public actor SSEServer {
 
         do {
             let session: BridgeSession
-            if let existingSession = sessionFromHeader(request) {
+            if let existingSession = sessionFromHeader(request, connector: connector) {
                 session = existingSession
             } else {
                 session = try await makeSession(for: connector)
@@ -775,7 +831,7 @@ public actor SSEServer {
             }
 
             let session: BridgeSession
-            if let existingSession = sessionFromHeader(request) {
+            if let existingSession = sessionFromHeader(request, connector: connector) {
                 session = existingSession
             } else {
                 session = try await makeSession(for: connector)
@@ -799,12 +855,16 @@ public actor SSEServer {
     }
 
     private func deleteStreamableHTTPSession(_ request: HTTPRequest) async -> HTTPResponse {
+        guard let connector = await connector(for: request) else {
+            return Self.textResponse(.notFound, "Connector not found\n")
+        }
         guard let sessionId = request.headers[Self.sessionHeader],
-              let session = sessions[sessionId] else {
+              let session = sessions[sessionId],
+              session.connectorName == connector.name else {
             return Self.textResponse(.notFound, "Session not found\n")
         }
-        await session.close()
         sessions.removeValue(forKey: sessionId)
+        await session.close(callOnClose: false)
         return HTTPResponse(statusCode: .accepted)
     }
 
@@ -893,11 +953,13 @@ public actor SSEServer {
         return session
     }
 
-    private func sessionFromHeader(_ request: HTTPRequest) -> BridgeSession? {
-        guard let sessionId = request.headers[Self.sessionHeader], !sessionId.isEmpty else {
+    private func sessionFromHeader(_ request: HTTPRequest, connector: Connector) -> BridgeSession? {
+        guard let sessionId = request.headers[Self.sessionHeader], !sessionId.isEmpty,
+              let session = sessions[sessionId],
+              session.connectorName == connector.name else {
             return nil
         }
-        return sessions[sessionId]
+        return session
     }
 
     private var oauthIssuer: String {
@@ -1219,7 +1281,7 @@ public actor SSEServer {
         return ConnectorIconAsset(source: .data(Data(svg.utf8)), mimeType: "image/svg+xml", sizes: ["any"], cacheKey: "generated-\(connector.name)")
     }
 
-    private func sseResponse(stream: AsyncStream<UInt8>, sessionId: String) -> HTTPResponse {
+    private func sseResponse(stream: AsyncStream<[UInt8]>, sessionId: String) -> HTTPResponse {
         HTTPResponse(
             statusCode: .ok,
             headers: [
@@ -1407,4 +1469,5 @@ public actor SSEServer {
     private static let sessionHeader = HTTPHeader("Mcp-Session-Id")
     private static let originHeader = HTTPHeader("Origin")
     private static let maxRequestBodyBytes = 1_048_576
+    private static let sessionIdleTimeout: TimeInterval = 600
 }

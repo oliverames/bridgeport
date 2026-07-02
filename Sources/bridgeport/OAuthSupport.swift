@@ -12,6 +12,16 @@ private struct PersistedOAuthClientRegistry: Codable {
     let clients: [OAuthRegisteredClient]
 }
 
+private struct PersistedOAuthAccessTokens: Codable {
+    let tokens: [PersistedOAuthAccessToken]
+}
+
+private struct PersistedOAuthAccessToken: Codable {
+    let token: String
+    let resource: String
+    let expiresAt: Date
+}
+
 private struct OAuthAuthorizationCode: Sendable {
     let code: String
     let clientID: String
@@ -28,14 +38,19 @@ private struct OAuthAccessToken: Sendable {
 }
 
 public actor OAuthTokenStore {
+    private static let maxPersistedClients = 256
+
     private let clientRegistryURL: URL?
+    private let accessTokenStoreURL: URL?
     private var clients: [String: OAuthRegisteredClient]
     private var authorizationCodes: [String: OAuthAuthorizationCode] = [:]
-    private var accessTokens: [String: OAuthAccessToken] = [:]
+    private var accessTokens: [String: OAuthAccessToken]
 
-    public init(clientRegistryURL: URL? = nil) {
+    public init(clientRegistryURL: URL? = nil, accessTokenStoreURL: URL? = nil) {
         self.clientRegistryURL = clientRegistryURL
+        self.accessTokenStoreURL = accessTokenStoreURL
         self.clients = Self.loadClients(from: clientRegistryURL)
+        self.accessTokens = Self.loadAccessTokens(from: accessTokenStoreURL)
     }
 
     public func registerClient(clientName: String, redirectURIs: [String], now: Date = Date()) -> OAuthRegisteredClient {
@@ -46,6 +61,7 @@ public actor OAuthTokenStore {
             issuedAt: Int(now.timeIntervalSince1970)
         )
         clients[client.clientID] = client
+        pruneClientsIfNeeded()
         persistClients()
         return client
     }
@@ -120,6 +136,7 @@ public actor OAuthTokenStore {
             resource: pending.resource,
             expiresAt: now.addingTimeInterval(12 * 60 * 60)
         )
+        persistAccessTokens()
         return token
     }
 
@@ -136,7 +153,19 @@ public actor OAuthTokenStore {
 
     private func cleanup(now: Date) {
         authorizationCodes = authorizationCodes.filter { $0.value.expiresAt > now }
-        accessTokens = accessTokens.filter { $0.value.expiresAt > now }
+        let liveTokens = accessTokens.filter { $0.value.expiresAt > now }
+        if liveTokens.count != accessTokens.count {
+            accessTokens = liveTokens
+            persistAccessTokens()
+        }
+    }
+
+    private func pruneClientsIfNeeded() {
+        guard clients.count > Self.maxPersistedClients else { return }
+        let oldestFirst = clients.values.sorted { $0.issuedAt < $1.issuedAt }
+        for stale in oldestFirst.prefix(clients.count - Self.maxPersistedClients) {
+            clients.removeValue(forKey: stale.clientID)
+        }
     }
 
     private static func loadClients(from url: URL?) -> [String: OAuthRegisteredClient] {
@@ -149,26 +178,55 @@ public actor OAuthTokenStore {
         return Dictionary(uniqueKeysWithValues: registry.clients.map { ($0.clientID, $0) })
     }
 
+    private static func loadAccessTokens(from url: URL?, now: Date = Date()) -> [String: OAuthAccessToken] {
+        guard let url,
+              let data = try? Data(contentsOf: url),
+              let persisted = try? JSONDecoder().decode(PersistedOAuthAccessTokens.self, from: data) else {
+            return [:]
+        }
+
+        var tokens: [String: OAuthAccessToken] = [:]
+        for entry in persisted.tokens where entry.expiresAt > now {
+            tokens[entry.token] = OAuthAccessToken(token: entry.token, resource: entry.resource, expiresAt: entry.expiresAt)
+        }
+        return tokens
+    }
+
     private func persistClients() {
         guard let clientRegistryURL else {
             return
         }
 
+        let registry = PersistedOAuthClientRegistry(clients: clients.values.sorted { $0.clientID < $1.clientID })
+        Self.writePrivateJSON(registry, to: clientRegistryURL, label: "OAuth client registry")
+    }
+
+    private func persistAccessTokens() {
+        guard let accessTokenStoreURL else {
+            return
+        }
+
+        let persisted = PersistedOAuthAccessTokens(tokens: accessTokens.values
+            .sorted { $0.token < $1.token }
+            .map { PersistedOAuthAccessToken(token: $0.token, resource: $0.resource, expiresAt: $0.expiresAt) })
+        Self.writePrivateJSON(persisted, to: accessTokenStoreURL, label: "OAuth access tokens")
+    }
+
+    private static func writePrivateJSON<T: Encodable>(_ value: T, to url: URL, label: String) {
         do {
-            let registry = PersistedOAuthClientRegistry(clients: clients.values.sorted { $0.clientID < $1.clientID })
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(registry)
-            let directory = clientRegistryURL.deletingLastPathComponent()
+            let data = try encoder.encode(value)
+            let directory = url.deletingLastPathComponent()
             let fileManager = FileManager.default
             if !fileManager.fileExists(atPath: directory.path) {
                 try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             }
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-            try data.write(to: clientRegistryURL, options: .atomic)
-            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: clientRegistryURL.path)
+            try data.write(to: url, options: .atomic)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
-            logMessage("OAuthTokenStore: Failed to persist OAuth client registry: \(error)")
+            logMessage("OAuthTokenStore: Failed to persist \(label): \(error)")
         }
     }
 }

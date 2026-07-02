@@ -17,8 +17,18 @@ func runShell(_ executable: String, _ arguments: [String]) -> (status: Int32, st
     do {
         try process.run()
 
+        // Drain stderr on a background thread so a child that fills the
+        // stderr pipe buffer before closing stdout cannot deadlock us.
+        nonisolated(unsafe) var stderrData = Data()
+        let stderrDrained = DispatchGroup()
+        stderrDrained.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            stderrDrained.leave()
+        }
+
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        stderrDrained.wait()
 
         process.waitUntilExit()
 

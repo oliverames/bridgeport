@@ -163,7 +163,7 @@ Bridgeport stores its config at `~/.config/bridgeport/config.json`.
 }
 ```
 
-For test isolation, `BRIDGEPORT_CONFIG_HOME=/tmp/bridgeport-test` redirects `config.json`, `mcp_config.json`, and `cloud_connectors.json`.
+For test isolation, `BRIDGEPORT_CONFIG_HOME=/tmp/bridgeport-test` redirects `config.json`, `mcp_config.json`, `cloud_connectors.json`, `oauth_clients.json`, and `oauth_tokens.json`.
 
 ## Generated MCP Client Config
 
@@ -330,6 +330,10 @@ GET /icons/<connector>
 ```
 
 Bridgeport advertises icon metadata in MCP `initialize` responses with `serverInfo.icons` and `serverInfo.iconUrl`. Mistral exports and initialize icon URLs include a deterministic `?v=` cache key so cloud providers refresh stale connector-card artwork after local assets change.
+
+Session lifecycle: `Mcp-Session-Id` values are scoped to the connector that issued them, `DELETE` closes the session and stops its connector subprocess, and sessions with no open streams and no traffic for 10 minutes are reaped automatically so disconnected clients cannot leak connector processes. A client that reuses a reaped session id receives 404 and re-initializes per the Streamable HTTP spec.
+
+OAuth dynamic client registrations and issued access tokens are persisted privately under `~/.config/bridgeport/`, so connected Claude custom connectors survive daemon restarts without re-authorizing.
 
 ## Cloudflare
 

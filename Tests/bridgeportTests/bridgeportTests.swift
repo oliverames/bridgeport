@@ -770,6 +770,100 @@ import Darwin
     #expect(badRedirect == nil)
 }
 
+@Test func oauthAccessTokensPersistAcrossStores() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let tokenStoreURL = root.appendingPathComponent("oauth_tokens.json")
+    let firstStore = OAuthTokenStore(accessTokenStoreURL: tokenStoreURL)
+    let client = await firstStore.registerClient(clientName: "Probe", redirectURIs: ["http://localhost/callback"])
+    let code = await firstStore.issueAuthorizationCode(
+        clientID: client.clientID,
+        redirectURI: "http://localhost/callback",
+        codeChallenge: OAuthSupport.pkceS256Challenge(for: "verifier"),
+        resource: "https://bridgeport.example.com/mcp/ynab"
+    )
+    let token = await firstStore.redeemAuthorizationCode(
+        code: code ?? "",
+        clientID: client.clientID,
+        redirectURI: "http://localhost/callback",
+        codeVerifier: "verifier"
+    )
+    #expect(token != nil)
+
+    let reloadedStore = OAuthTokenStore(accessTokenStoreURL: tokenStoreURL)
+    #expect(await reloadedStore.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/ynab"))
+    #expect(!(await reloadedStore.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/apple-notes")))
+
+    let attrs = try FileManager.default.attributesOfItem(atPath: tokenStoreURL.path)
+    let permissions = try #require(attrs[.posixPermissions] as? NSNumber).intValue & 0o777
+    #expect(permissions == 0o600)
+}
+
+@Test func oauthClientRegistryPrunesOldestClientsBeyondCap() async {
+    let store = OAuthTokenStore()
+    var firstClientID = ""
+    var lastClientID = ""
+
+    for index in 0..<300 {
+        let client = await store.registerClient(
+            clientName: "Client \(index)",
+            redirectURIs: ["http://localhost/callback"],
+            now: Date(timeIntervalSince1970: TimeInterval(index))
+        )
+        if index == 0 {
+            firstClientID = client.clientID
+        }
+        lastClientID = client.clientID
+    }
+
+    #expect(await store.client(id: firstClientID) == nil)
+    #expect(await store.client(id: lastClientID) != nil)
+}
+
+@Test func bridgeSessionIdleDetectionTracksOpenStreams() async {
+    let connector = Connector(
+        name: "idle",
+        directoryPath: "/tmp",
+        configPath: "/tmp/.mcp.json",
+        command: "python3",
+        args: [],
+        env: [:],
+        importedFrom: "/tmp",
+        sourceKind: .imported
+    )
+    let session = BridgeSession(id: "idle-test", connectorName: "idle", bridge: ProcessBridge(connector: connector, env: [:]))
+
+    #expect(await session.isIdle(olderThan: -1))
+    #expect(!(await session.isIdle(olderThan: 3600)))
+
+    let (streamId, stream) = await session.addPersistentStream()
+    #expect(!(await session.isIdle(olderThan: -1)))
+
+    await session.removePersistentStream(id: streamId)
+    #expect(await session.isIdle(olderThan: -1))
+    withExtendedLifetime(stream) {}
+}
+
+@Test func streamSequenceDeliversChunkedBytesInOrder() async throws {
+    let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
+    continuation.yield(Array("event: message\n".utf8))
+    continuation.yield([])
+    continuation.yield(Array("data: {}\n\n".utf8))
+    continuation.finish()
+
+    var iterator = StreamSequence(stream: stream).makeAsyncIterator()
+    var collected: [UInt8] = []
+    if let first = await iterator.next() {
+        collected.append(first)
+    }
+    while let buffer = try await iterator.nextBuffer(suggested: 4096) {
+        collected.append(contentsOf: buffer)
+    }
+
+    #expect(String(decoding: collected, as: UTF8.self) == "event: message\ndata: {}\n\n")
+}
+
 @Test func generatedTokensUseURLSafeCharacters() {
     let token = ConfigManager.generateSecureToken()
     #expect(token.hasPrefix("ames_"))

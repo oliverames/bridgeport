@@ -366,7 +366,12 @@ public actor CloudflareManager {
         }
 
         return tunnels
-            .filter { ($0["deleted_at"] as? String)?.isEmpty != false }
+            .filter { tunnel in
+                // cloudflared emits Go's zero timestamp ("0001-01-01T...")
+                // for tunnels that have never been deleted.
+                guard let deletedAt = tunnel["deleted_at"] as? String, !deletedAt.isEmpty else { return true }
+                return deletedAt.hasPrefix("0001-")
+            }
             .compactMap { tunnel -> String? in
                 guard let tunnelName = tunnel["name"] as? String, tunnelName == name else { return nil }
                 return tunnel["id"] as? String
