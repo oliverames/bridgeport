@@ -765,12 +765,17 @@ public actor SSEServer {
     }
 
     private func postLegacyMessage(_ request: HTTPRequest) async -> HTTPResponse {
+        guard let connector = await connector(for: request) else {
+            return Self.textResponse(.notFound, "Connector not found\n")
+        }
+
         guard let sessionId = request.query.first(where: { $0.name == "sessionId" })?.value,
               !sessionId.isEmpty else {
             return Self.textResponse(.badRequest, "Missing sessionId parameter\n")
         }
 
-        guard let session = sessions[sessionId] else {
+        guard let session = sessions[sessionId],
+              session.connectorName == connector.name else {
             return Self.textResponse(.notFound, "Session not found\n")
         }
 
@@ -799,9 +804,12 @@ public actor SSEServer {
 
         do {
             let session: BridgeSession
-            if let existingSession = sessionFromHeader(request, connector: connector) {
-                session = existingSession
-            } else {
+            switch resolveSession(request, connector: connector) {
+            case .notFound:
+                return Self.textResponse(.notFound, "Session not found\n")
+            case .existing(let existing):
+                session = existing
+            case .new:
                 session = try await makeSession(for: connector)
             }
             registerSession(session)
@@ -831,9 +839,12 @@ public actor SSEServer {
             }
 
             let session: BridgeSession
-            if let existingSession = sessionFromHeader(request, connector: connector) {
-                session = existingSession
-            } else {
+            switch resolveSession(request, connector: connector) {
+            case .notFound:
+                return Self.textResponse(.notFound, "Session not found\n")
+            case .existing(let existing):
+                session = existing
+            case .new:
                 session = try await makeSession(for: connector)
             }
             registerSession(session)
@@ -953,13 +964,25 @@ public actor SSEServer {
         return session
     }
 
-    private func sessionFromHeader(_ request: HTTPRequest, connector: Connector) -> BridgeSession? {
-        guard let sessionId = request.headers[Self.sessionHeader], !sessionId.isEmpty,
-              let session = sessions[sessionId],
-              session.connectorName == connector.name else {
-            return nil
+    private enum SessionResolution {
+        case new
+        case existing(BridgeSession)
+        case notFound
+    }
+
+    /// A request without an Mcp-Session-Id header starts a new session. A
+    /// request with one must reference a live session for this connector;
+    /// otherwise the client gets 404 and re-initializes per the Streamable
+    /// HTTP spec, rather than silently reaching a fresh, uninitialized
+    /// connector process.
+    private func resolveSession(_ request: HTTPRequest, connector: Connector) -> SessionResolution {
+        guard let sessionId = request.headers[Self.sessionHeader], !sessionId.isEmpty else {
+            return .new
         }
-        return session
+        guard let session = sessions[sessionId], session.connectorName == connector.name else {
+            return .notFound
+        }
+        return .existing(session)
     }
 
     private var oauthIssuer: String {

@@ -400,6 +400,8 @@ script/notarize_release.sh dist/release/Bridgeport-1.0.dmg
 
 `script/notarize_release.sh` retrieves the App Store Connect `.p8` from 1Password, submits the DMG with `notarytool`, staples the ticket, and runs `spctl` verification.
 
+GitHub releases are published by `.github/workflows/release.yml`: push an annotated `v<version>` tag, or dispatch the Release workflow with a `version` input to create the tag at the dispatched commit. Release notes are read from `docs/release-notes/v<version>.md` when that file exists. Attach the notarized DMG to the release afterwards.
+
 ## License
 
 Private. Copyright Oliver Ames.

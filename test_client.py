@@ -315,7 +315,19 @@ def run_tests():
             except urllib.error.HTTPError as e:
                 if e.code != 404:
                     raise
-            log("PASS: Streamable HTTP session DELETE closes and forgets the session")
+            payload["id"] = 9
+            stale_req = request(
+                f"http://localhost:{port}/mcp/mock-echo",
+                json.dumps(payload).encode("utf-8"),
+            )
+            stale_req.add_header("Mcp-Session-Id", session_id)
+            try:
+                urllib.request.urlopen(stale_req, timeout=10)
+                raise AssertionError("Expected POST with stale session id to return 404")
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+            log("PASS: Streamable HTTP session DELETE closes the session and stale ids return 404")
 
             config_path = os.path.join(config_home, "config.json")
             client_config_path = os.path.join(config_home, "mcp_config.json")

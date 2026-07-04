@@ -4,7 +4,9 @@
 
 **Verification**: Authored on a Linux CI container without a macOS toolchain: all Swift sources pass `swiftc -parse` syntax checking, and the changes ship with 5 new unit tests plus a new `test_client.py` smoke test (streamable HTTP session DELETE). Run `swift test`, `python3 test_client.py`, and `script/build_and_run.sh --verify` on the Mac before packaging a DMG for this tag.
 
-**Left off at**: Source release `v1.0.3` published from the tag. DMG packaging/notarization (`script/package_release.sh 1.0.3`, `script/notarize_release.sh`) still happens on the Mac and can be attached to the release afterwards.
+**Follow-up in the same pass**: A self-review after `v1.0.3` was published found two session-semantics gaps, fixed and released as `v1.0.4` (which supersedes `v1.0.3`): the legacy `POST /<connector>/message` endpoint now scopes `sessionId` to the connector in the route, and Streamable HTTP requests presenting a stale `Mcp-Session-Id` return 404 for client re-initialization instead of silently reaching a fresh, uninitialized connector process.
+
+**Left off at**: Source release `v1.0.4` published from the branch. DMG packaging/notarization (`script/package_release.sh 1.0.4`, `script/notarize_release.sh`) still happens on the Mac and can be attached to the release afterwards.
 
 ---
 
