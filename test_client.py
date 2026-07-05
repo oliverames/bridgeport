@@ -297,6 +297,38 @@ def run_tests():
                     raise
                 log("PASS: Oversized MCP request rejected")
 
+            log("Test 12: Streamable HTTP session DELETE...")
+            delete_req = urllib.request.Request(
+                f"http://localhost:{port}/mcp/mock-echo",
+                headers={
+                    "Authorization": f"Bearer {TOKEN}",
+                    "Mcp-Session-Id": session_id,
+                },
+                method="DELETE",
+            )
+            delete_res = urllib.request.urlopen(delete_req, timeout=10)
+            if delete_res.code != 202:
+                raise AssertionError(f"Expected 202 from session DELETE, got {delete_res.code}")
+            try:
+                urllib.request.urlopen(delete_req, timeout=10)
+                raise AssertionError("Expected DELETE of closed session to return 404")
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+            payload["id"] = 9
+            stale_req = request(
+                f"http://localhost:{port}/mcp/mock-echo",
+                json.dumps(payload).encode("utf-8"),
+            )
+            stale_req.add_header("Mcp-Session-Id", session_id)
+            try:
+                urllib.request.urlopen(stale_req, timeout=10)
+                raise AssertionError("Expected POST with stale session id to return 404")
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+            log("PASS: Streamable HTTP session DELETE closes the session and stale ids return 404")
+
             config_path = os.path.join(config_home, "config.json")
             client_config_path = os.path.join(config_home, "mcp_config.json")
             cloud_config_path = os.path.join(config_home, "cloud_connectors.json")

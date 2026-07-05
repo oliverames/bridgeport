@@ -306,6 +306,10 @@ public enum BridgeportPaths {
         configDirectory(environment: environment).appendingPathComponent("oauth_clients.json")
     }
 
+    public static func oauthAccessTokenStoreURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        configDirectory(environment: environment).appendingPathComponent("oauth_tokens.json")
+    }
+
     public static func installedBinaryURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         configDirectory(environment: environment).appendingPathComponent("bin/bridgeport")
     }

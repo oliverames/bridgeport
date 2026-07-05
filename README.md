@@ -163,7 +163,7 @@ Bridgeport stores its config at `~/.config/bridgeport/config.json`.
 }
 ```
 
-For test isolation, `BRIDGEPORT_CONFIG_HOME=/tmp/bridgeport-test` redirects `config.json`, `mcp_config.json`, and `cloud_connectors.json`.
+For test isolation, `BRIDGEPORT_CONFIG_HOME=/tmp/bridgeport-test` redirects `config.json`, `mcp_config.json`, `cloud_connectors.json`, `oauth_clients.json`, and `oauth_tokens.json`.
 
 ## Generated MCP Client Config
 
@@ -331,6 +331,10 @@ GET /icons/<connector>
 
 Bridgeport advertises icon metadata in MCP `initialize` responses with `serverInfo.icons` and `serverInfo.iconUrl`. Mistral exports and initialize icon URLs include a deterministic `?v=` cache key so cloud providers refresh stale connector-card artwork after local assets change.
 
+Session lifecycle: `Mcp-Session-Id` values are scoped to the connector that issued them, `DELETE` closes the session and stops its connector subprocess, and sessions with no open streams and no traffic for 10 minutes are reaped automatically so disconnected clients cannot leak connector processes. A client that reuses a reaped session id receives 404 and re-initializes per the Streamable HTTP spec.
+
+OAuth dynamic client registrations and issued access tokens are persisted privately under `~/.config/bridgeport/`, so connected Claude custom connectors survive daemon restarts without re-authorizing.
+
 ## Cloudflare
 
 Bridgeport owns the local Cloudflare Tunnel lifecycle. The Cloudflare settings pane stores non-secret account metadata, a hostname such as `mcp.amesvt.com`, the named tunnel, the local `cloudflared` path, and Bridgeport's generated `cloudflared` config path. Secrets stay outside the app bundle and repository: use `cloudflared tunnel login`, a local credentials file, a tunnel token, environment variables, or `op://` references.
@@ -395,6 +399,8 @@ script/notarize_release.sh dist/release/Bridgeport-1.0.dmg
 `script/package_release.sh` builds a release `.app`, signs it with the first available Developer ID Application identity or `BRIDGEPORT_SIGN_IDENTITY`, creates `dist/release/Bridgeport-<version>.dmg`, and signs the DMG.
 
 `script/notarize_release.sh` retrieves the App Store Connect `.p8` from 1Password, submits the DMG with `notarytool`, staples the ticket, and runs `spctl` verification.
+
+GitHub releases are published by `.github/workflows/release.yml`: push an annotated `v<version>` tag, or dispatch the Release workflow with a `version` input to create the tag at the dispatched commit. Release notes are read from `docs/release-notes/v<version>.md` when that file exists. Attach the notarized DMG to the release afterwards.
 
 ## License
 

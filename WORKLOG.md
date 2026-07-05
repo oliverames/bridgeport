@@ -1,3 +1,15 @@
+## 2026-07-02 - Bridgeport 1.0.3 reliability and robustness pass
+
+**What changed**: Comprehensive reliability review of the daemon's serving path. SSE/streamable HTTP responses now stream chunked byte buffers instead of one byte at a time, sessions track activity and an idle reaper closes abandoned sessions so disconnected clients no longer leak connector subprocesses, `Mcp-Session-Id` values are scoped to the connector that issued them (including DELETE), OAuth access tokens persist across daemon restarts so connected Claude custom connectors survive settings saves without re-authorizing, the OAuth client registry is capped at 256 entries, connector stdin writes moved off the cooperative executor onto a serial queue, connector shutdown now closes stdin and escalates SIGTERM to SIGKILL after a 5s grace period, connector stdout lines are capped at 32 MB, `runShell` drains stderr concurrently to remove a pipe-buffer deadlock, and the cloudflared tunnel lookup no longer misreads Go zero timestamps in `deleted_at` as deletions. Added a tag-push GitHub Actions workflow that publishes releases from annotated tags.
+
+**Verification**: Authored on a Linux CI container without a macOS toolchain: all Swift sources pass `swiftc -parse` syntax checking, and the changes ship with 5 new unit tests plus a new `test_client.py` smoke test (streamable HTTP session DELETE). Run `swift test`, `python3 test_client.py`, and `script/build_and_run.sh --verify` on the Mac before packaging a DMG for this tag.
+
+**Follow-up in the same pass**: A self-review after `v1.0.3` was published found two session-semantics gaps, fixed and released as `v1.0.4` (which supersedes `v1.0.3`): the legacy `POST /<connector>/message` endpoint now scopes `sessionId` to the connector in the route, and Streamable HTTP requests presenting a stale `Mcp-Session-Id` return 404 for client re-initialization instead of silently reaching a fresh, uninitialized connector process.
+
+**Left off at**: Source release `v1.0.4` published from the branch. DMG packaging/notarization (`script/package_release.sh 1.0.4`, `script/notarize_release.sh`) still happens on the Mac and can be attached to the release afterwards.
+
+---
+
 ## 2026-06-26 - Bridgeport 1.0.2 production connector release
 
 **What changed**: Completed the production hardening pass for Bridgeport's public YNAB connector path. Added a launchd helper for reliable daemon restarts, moved blocking process reads off Swift's cooperative executor, made 1Password local-env FIFO reads non-blocking, fixed pane-targeted settings launch routing for packaged app verification, and preserved YNAB production write capability while allowing validation runs to force read-only behavior with a temporary Bridgeport env override.

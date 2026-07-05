@@ -8,3 +8,4 @@ DerivedData/
 .netrc
 /dist/
 *.log
+__pycache__/

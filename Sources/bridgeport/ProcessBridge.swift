@@ -7,6 +7,9 @@ public actor ProcessBridge {
 
     private let connector: Connector
     private let env: [String: String]
+    // Serial per-bridge queue so stdin writes stay ordered without blocking
+    // Swift's cooperative executor when the subprocess pipe is full.
+    private let stdinQueue = DispatchQueue(label: "com.oliverames.bridgeport.processbridge.stdin", qos: .utility)
     private var process: Process?
     private var stdinPipe: Pipe?
     private var stdoutPipe: Pipe?
@@ -80,13 +83,13 @@ public actor ProcessBridge {
         if !line.hasSuffix("\n") {
             line.append("\n")
         }
-        if let data = line.data(using: .utf8) {
+        let data = Data(line.utf8)
+        let name = connector.name
+        stdinQueue.async {
             do {
                 try stdinPipe.fileHandleForWriting.write(contentsOf: data)
-                logMessage("ProcessBridge.write: successfully wrote bytes to stdin")
             } catch {
-                logMessage("ProcessBridge.write: failed to write: \(error)")
-                print("[\(connector.name)] Failed to write to stdin: \(error)")
+                logMessage("ProcessBridge.write: failed to write to \(name) stdin: \(error)")
             }
         }
     }
@@ -94,11 +97,28 @@ public actor ProcessBridge {
     public func stop() {
         guard isRunning else { return }
         isRunning = false
-        process?.terminate()
+        let proc = process
+        let stdin = stdinPipe
         process = nil
         stdinPipe = nil
         stdoutPipe = nil
         stderrPipe = nil
+
+        // Close stdin first so well-behaved MCP servers exit on EOF, then
+        // terminate, then escalate to SIGKILL if the process ignores SIGTERM.
+        stdinQueue.async {
+            try? stdin?.fileHandleForWriting.close()
+        }
+        if let proc, proc.isRunning {
+            proc.terminate()
+            let pid = proc.processIdentifier
+            Self.waitQueue.asyncAfter(deadline: .now() + 5) {
+                if proc.isRunning {
+                    logMessage("ProcessBridge.stop: process \(pid) ignored SIGTERM, sending SIGKILL")
+                    kill(pid, SIGKILL)
+                }
+            }
+        }
         onExit?()
     }
 
@@ -107,6 +127,10 @@ public actor ProcessBridge {
         isRunning = false
         onExit?()
     }
+
+    // Cap on a single newline-delimited JSON-RPC message. A connector that
+    // streams an unterminated line cannot balloon daemon memory.
+    private static let maxLineBytes = 32 * 1024 * 1024
 
     private static func readStdoutLoop(pipe: Pipe, onMessage: @escaping @Sendable (String) -> Void) {
         let fd = pipe.fileHandleForReading.fileDescriptor
@@ -121,6 +145,12 @@ public actor ProcessBridge {
             }
             let data = Data(tempBuffer.prefix(bytesRead))
             buffer.append(data)
+
+            if buffer.count > maxLineBytes, !buffer.contains(10) {
+                logMessage("ProcessBridge.readStdoutLoop: dropping oversized unterminated output line (\(buffer.count) bytes)")
+                buffer.removeAll(keepingCapacity: false)
+                continue
+            }
 
             // Parse newline delimited messages
             while let newlineIndex = buffer.firstIndex(of: 10) { // 10 is '\n'
