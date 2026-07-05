@@ -987,6 +987,60 @@ import Darwin
     #expect(status.hostname == "mcp.amesvt.com")
 }
 
+@Test func nonInitializeMessagesSkipIconDecoration() {
+    let notification = #"{"jsonrpc":"2.0","method":"notifications/progress","params":{"value":1}}"#
+    let decorated = BridgeSession.messageWithBridgeportIconMetadata(
+        notification,
+        iconURL: "https://bridgeport.example.com/icons/mock"
+    )
+    #expect(decorated == notification)
+}
+
+@Test func discoveryResultsAreCachedBriefly() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let firstDir = root.appendingPathComponent("first")
+    try FileManager.default.createDirectory(at: firstDir, withIntermediateDirectories: true)
+    try #"{"mcpServers": {"first": {"command": "node"}}}"#
+        .write(to: firstDir.appendingPathComponent(".mcp.json"), atomically: true, encoding: .utf8)
+
+    let manager = ConnectorManager(connectorPaths: [root.path])
+    let initial = await manager.discoverConnectors()
+    #expect(initial.map(\.name) == ["first"])
+
+    let secondDir = root.appendingPathComponent("second")
+    try FileManager.default.createDirectory(at: secondDir, withIntermediateDirectories: true)
+    try #"{"mcpServers": {"second": {"command": "node"}}}"#
+        .write(to: secondDir.appendingPathComponent(".mcp.json"), atomically: true, encoding: .utf8)
+
+    // The serving path caches discovery briefly so per-request lookups do not
+    // re-walk the filesystem; a connector added moments ago appears after the
+    // TTL, not within it.
+    let cached = await manager.discoverConnectors()
+    #expect(cached.map(\.name) == ["first"])
+}
+
+@Test func connectorIconCandidatesIncludeLogoAndRootFilenames() {
+    let connector = Connector(
+        name: "mock",
+        directoryPath: "/tmp/mock",
+        configPath: "/tmp/mock/.mcp.json",
+        command: "node",
+        args: [],
+        env: [:],
+        importedFrom: "/tmp/mock",
+        sourceKind: .imported
+    )
+    let candidatePaths = ConfigManager.connectorIconCandidateURLs(for: connector).map(\.path)
+
+    #expect(candidatePaths.contains("/tmp/mock/assets/logo.png"))
+    #expect(candidatePaths.contains("/tmp/mock/icon.png"))
+    #expect(candidatePaths.contains("/tmp/mock/logo.svg"))
+    // Bundled source repo icons must stay ahead of wrapper-level icons.
+    #expect(candidatePaths.firstIndex(of: "/tmp/mock/sources/mock/assets/icon.png")! < candidatePaths.firstIndex(of: "/tmp/mock/assets/icon.png")!)
+}
+
 private func temporaryDirectory() throws -> URL {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("bridgeport-tests-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

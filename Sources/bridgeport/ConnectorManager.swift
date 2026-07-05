@@ -68,6 +68,13 @@ public actor ConnectorManager {
     private let configOverrides: [String: String]
     private let processEnvironment: [String: String]
 
+    // Serving-path discovery cache. Every MCP request resolves its connector,
+    // and a full filesystem walk per request is wasteful; a short TTL keeps
+    // request latency flat while newly added connectors still appear promptly.
+    private var cachedConnectors: [Connector]?
+    private var cachedConnectorsAt = Date.distantPast
+    private static let discoveryCacheTTL: TimeInterval = 2
+
     public init(config: BridgeportConfig, processEnvironment: [String: String] = ProcessInfo.processInfo.environment) {
         self.config = config
         self.connectorPaths = Self.normalizedUniquePaths([config.connectorsPath ?? ConfigManager.defaultPrimaryConnectorsPath()] + (config.additionalConnectorPaths ?? []))
@@ -115,7 +122,14 @@ public actor ConnectorManager {
     }
 
     public func discoverConnectors() async -> [Connector] {
-        await discoverConnectors(includeImported: true)
+        let now = Date()
+        if let cachedConnectors, now.timeIntervalSince(cachedConnectorsAt) < Self.discoveryCacheTTL {
+            return cachedConnectors
+        }
+        let discovered = await discoverConnectors(includeImported: true)
+        cachedConnectors = discovered
+        cachedConnectorsAt = now
+        return discovered
     }
 
     public func discoverConnectors(at paths: [String]) async -> [Connector] {

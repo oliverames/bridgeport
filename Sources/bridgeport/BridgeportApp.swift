@@ -107,7 +107,7 @@ struct BridgeportApp: App {
         }
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("Settings...") {
+                Button("Settings…") {
                     openSettingsWindow()
                 }
                 .keyboardShortcut(",", modifiers: .command)
@@ -134,10 +134,10 @@ struct BridgeportApp: App {
         if value.count <= maxLength {
             return value + suffix
         }
-        guard maxLength > 3 else {
+        guard maxLength > 1 else {
             return String(value.prefix(maxLength)) + suffix
         }
-        return String(value.prefix(maxLength - 3)) + "..." + suffix
+        return String(value.prefix(maxLength - 1)) + "…" + suffix
     }
 
     private var menuBarSymbol: String {

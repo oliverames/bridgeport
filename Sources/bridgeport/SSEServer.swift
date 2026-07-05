@@ -246,7 +246,10 @@ public actor BridgeSession {
     }
 
     public static func messageWithBridgeportIconMetadata(_ message: String, icon: BridgeportIconMetadata?) -> String {
+        // Only initialize responses carry serverInfo; skip the JSON round-trip
+        // for every other message on the stream.
         guard let icon,
+              message.contains("\"serverInfo\""),
               let data = message.data(using: .utf8),
               var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               var result = object["result"] as? [String: Any],
@@ -606,7 +609,8 @@ public actor SSEServer {
                     "response_types": ["code"],
                     "token_endpoint_auth_method": "none"
                 ],
-                request: request
+                request: request,
+                noStore: true
             )
         } catch {
             return Self.oauthErrorResponse(.badRequest, "invalid_request", "Could not read dynamic client registration request.", request: request)
@@ -639,6 +643,9 @@ public actor SSEServer {
 
             let approvalToken = form["bridgeport_token"] ?? ""
             guard Self.constantTimeEquals(approvalToken, config.token ?? "") else {
+                // Slow down online guessing against the approval form; the
+                // master token is high-entropy but this endpoint is public.
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
                 return Self.htmlResponse(.forbidden, authorizationFormHTML(validation: validation, error: "Bridgeport token did not match."))
             }
 
@@ -705,15 +712,20 @@ public actor SSEServer {
                     "expires_in": 43_200,
                     "scope": "mcp"
                 ],
-                request: request
+                request: request,
+                noStore: true
             )
         } catch {
             return Self.oauthErrorResponse(.badRequest, "invalid_request", "Could not read OAuth token request.", request: request)
         }
     }
 
+    /// Serves connector-card artwork. Icons follow the same exposure rules as
+    /// MCP routes: enabled connectors are served locally, and requests
+    /// arriving via the public hostname additionally require the connector's
+    /// Public toggle so private connectors never leak branding.
     private func connectorIconResponse(for request: HTTPRequest, includeBody: Bool = true) async -> HTTPResponse {
-        guard let connector = await publicConnector(for: request),
+        guard let connector = await connector(for: request),
               let icon = connectorIconAsset(for: connector) else {
             return Self.textResponse(.notFound, "Icon not found\n")
         }
@@ -724,16 +736,28 @@ public actor SSEServer {
         headers[HTTPHeader("Access-Control-Allow-Origin")] = "*"
         headers[HTTPHeader("X-Content-Type-Options")] = "nosniff"
 
+        let etag = icon.cacheKey.isEmpty ? nil : "\"\(icon.cacheKey)\""
+        if let etag {
+            headers[HTTPHeader("ETag")] = etag
+            if request.headers[HTTPHeader("If-None-Match")] == etag {
+                return HTTPResponse(statusCode: .notModified, headers: headers)
+            }
+        }
+
         switch icon.source {
         case .file(let fileURL):
+            if !includeBody {
+                guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+                      let size = (attrs[.size] as? NSNumber)?.intValue else {
+                    return Self.textResponse(.notFound, "Icon not found\n")
+                }
+                headers[.contentLength] = "\(size)"
+                return HTTPResponse(statusCode: .ok, headers: headers)
+            }
             guard let data = try? Data(contentsOf: fileURL) else {
                 return Self.textResponse(.notFound, "Icon not found\n")
             }
-            if includeBody {
-                return HTTPResponse(statusCode: .ok, headers: headers, body: data)
-            }
-            headers[.contentLength] = "\(data.count)"
-            return HTTPResponse(statusCode: .ok, headers: headers)
+            return HTTPResponse(statusCode: .ok, headers: headers, body: data)
         case .redirect(let url):
             headers[HTTPHeader("Location")] = url.absoluteString
             return HTTPResponse(statusCode: .seeOther, headers: headers)
@@ -749,6 +773,10 @@ public actor SSEServer {
     private func openLegacySSE(_ request: HTTPRequest) async -> HTTPResponse {
         guard let connector = await connector(for: request) else {
             return Self.textResponse(.notFound, "Connector not found\n")
+        }
+
+        guard hasSessionCapacity else {
+            return Self.sessionCapacityResponse()
         }
 
         do {
@@ -810,6 +838,9 @@ public actor SSEServer {
             case .existing(let existing):
                 session = existing
             case .new:
+                guard hasSessionCapacity else {
+                    return Self.sessionCapacityResponse()
+                }
                 session = try await makeSession(for: connector)
             }
             registerSession(session)
@@ -845,6 +876,9 @@ public actor SSEServer {
             case .existing(let existing):
                 session = existing
             case .new:
+                guard hasSessionCapacity else {
+                    return Self.sessionCapacityResponse()
+                }
                 session = try await makeSession(for: connector)
             }
             registerSession(session)
@@ -937,6 +971,19 @@ public actor SSEServer {
         } catch {
             return Self.textResponse(.internalServerError, "Failed to encode status\n")
         }
+    }
+
+    /// Bounds the number of live connector subprocesses so a misbehaving or
+    /// reconnect-looping client cannot exhaust the Mac's resources.
+    private var hasSessionCapacity: Bool {
+        sessions.count < Self.maxSessions
+    }
+
+    private static func sessionCapacityResponse() -> HTTPResponse {
+        var headers = HTTPHeaders()
+        headers[.contentType] = "text/plain"
+        headers[HTTPHeader("Retry-After")] = "30"
+        return HTTPResponse(statusCode: .serviceUnavailable, headers: headers, body: Data("Too many active sessions\n".utf8))
     }
 
     private func registerSession(_ session: BridgeSession) {
@@ -1147,7 +1194,12 @@ public actor SSEServer {
 
     private func connectorIconPublicMetadata(for connector: Connector) -> BridgeportIconMetadata? {
         guard let asset = connectorIconAsset(for: connector) else { return nil }
-        var src = "\(oauthIssuer)/icons/\(config.publicRoutePath(for: connector))"
+        // Private connectors advertise a localhost icon URL so local MCP
+        // clients resolve artwork; only public connectors use the tunnel URL.
+        let baseURL = config.settings(for: connector.name).exposePublicly
+            ? oauthIssuer
+            : "http://localhost:\(config.port ?? 8080)"
+        var src = "\(baseURL)/icons/\(config.publicRoutePath(for: connector))"
         if !asset.cacheKey.isEmpty {
             src += "?v=\(asset.cacheKey)"
         }
@@ -1311,6 +1363,7 @@ public actor SSEServer {
                 .contentType: "text/event-stream",
                 HTTPHeader("Cache-Control"): "no-cache",
                 HTTPHeader("Connection"): "keep-alive",
+                HTTPHeader("Access-Control-Expose-Headers"): "Mcp-Session-Id",
                 Self.sessionHeader: sessionId
             ],
             body: HTTPBodySequence(from: StreamSequence(stream: stream))
@@ -1414,10 +1467,15 @@ public actor SSEServer {
         HTTPResponse(statusCode: statusCode, headers: [.contentType: "text/html; charset=utf-8"], body: Data(html.utf8))
     }
 
-    private static func jsonResponse(_ statusCode: HTTPStatusCode, _ object: [String: Any], request: HTTPRequest) -> HTTPResponse {
+    private static func jsonResponse(_ statusCode: HTTPStatusCode, _ object: [String: Any], request: HTTPRequest, noStore: Bool = false) -> HTTPResponse {
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
         var headers = oauthCORSHeaders(for: request)
         headers[.contentType] = "application/json"
+        if noStore {
+            // RFC 6749 requires token responses to be uncacheable.
+            headers[HTTPHeader("Cache-Control")] = "no-store"
+            headers[HTTPHeader("Pragma")] = "no-cache"
+        }
         return HTTPResponse(statusCode: statusCode, headers: headers, body: data)
     }
 
