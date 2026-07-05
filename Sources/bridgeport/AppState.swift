@@ -108,7 +108,7 @@ public final class AppState {
 
         await configManager.writeMcpClientConfig(config: currentConfig(), connectors: discoveredConnectors)
         await configManager.writeCloudConnectorConfig(config: currentConfig(), connectors: discoveredConnectors)
-        checkDaemonStatus()
+        await checkDaemonStatus()
         await refreshDaemonRuntimeStatus()
         await refreshCloudflareStatus()
     }
@@ -255,15 +255,19 @@ public final class AppState {
         }
     }
 
-    public func checkDaemonStatus() {
-        let fileManager = FileManager.default
-        let plistExists = fileManager.fileExists(atPath: plistURL.path)
-        let binExists = fileManager.fileExists(atPath: destURL.path)
-
-        isDaemonInstalled = plistExists && binExists
-
-        let result = runShell("/bin/launchctl", ["print", "gui/\(uid)/\(label)"])
-        isDaemonRunning = (result.status == 0)
+    // launchctl calls block, and LaunchAgentManager retries with sleeps, so
+    // every launchd interaction runs detached to keep the UI responsive.
+    public func checkDaemonStatus() async {
+        let plistPath = plistURL.path
+        let destPath = destURL.path
+        let (installed, running) = await Task.detached(priority: .userInitiated) { [uid, label] in
+            let fileManager = FileManager.default
+            let installed = fileManager.fileExists(atPath: plistPath) && fileManager.fileExists(atPath: destPath)
+            let running = runShell("/bin/launchctl", ["print", "gui/\(uid)/\(label)"]).status == 0
+            return (installed, running)
+        }.value
+        isDaemonInstalled = installed
+        isDaemonRunning = running
     }
 
     public func installDaemon() async {
@@ -273,7 +277,9 @@ public final class AppState {
         let launchAgentsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
 
         if isDaemonRunning {
-            LaunchAgentManager.bootout(label: label, uid: uid, plistURL: plistURL)
+            _ = await Task.detached { [label, uid, plistURL] in
+                LaunchAgentManager.bootout(label: label, uid: uid, plistURL: plistURL)
+            }.value
         }
 
         do {
@@ -313,12 +319,14 @@ public final class AppState {
             return
         }
 
-        let result = LaunchAgentManager.bootstrap(label: label, uid: uid, plistURL: plistURL)
+        let result = await Task.detached { [label, uid, plistURL] in
+            LaunchAgentManager.bootstrap(label: label, uid: uid, plistURL: plistURL)
+        }.value
         if result.status != 0 {
             logMessage("AppState: Failed to start daemon launchctl exit code \(result.status): \(result.stderr)")
         }
 
-        checkDaemonStatus()
+        await checkDaemonStatus()
         await refreshDaemonRuntimeStatus()
     }
 
@@ -326,7 +334,9 @@ public final class AppState {
         let fileManager = FileManager.default
 
         if isDaemonRunning {
-            LaunchAgentManager.bootout(label: label, uid: uid, plistURL: plistURL)
+            _ = await Task.detached { [label, uid, plistURL] in
+                LaunchAgentManager.bootout(label: label, uid: uid, plistURL: plistURL)
+            }.value
         }
 
         if fileManager.fileExists(atPath: plistURL.path) {
@@ -337,17 +347,19 @@ public final class AppState {
             try? fileManager.removeItem(at: destURL)
         }
 
-        checkDaemonStatus()
+        await checkDaemonStatus()
         await refreshDaemonRuntimeStatus()
     }
 
     public func restartDaemon() async {
-        let result = LaunchAgentManager.restart(label: label, uid: uid, plistURL: plistURL)
+        let result = await Task.detached { [label, uid, plistURL] in
+            LaunchAgentManager.restart(label: label, uid: uid, plistURL: plistURL)
+        }.value
         if result.status != 0 {
             logMessage("AppState: Failed to restart daemon: \(result.stderr)")
         }
 
-        checkDaemonStatus()
+        await checkDaemonStatus()
         await refreshDaemonRuntimeStatus()
     }
 
@@ -387,6 +399,10 @@ public final class AppState {
 
     public func mistralCustomConnectorJSON(for connector: Connector) -> String {
         ConfigManager.encodedJSONString(ConfigManager.mistralCustomConnector(config: currentConfig(), connector: connector))
+    }
+
+    public var bearerHeaderValue: String {
+        "Bearer \(token)"
     }
 
     public func vibeCodeTOML(for connector: Connector) -> String {

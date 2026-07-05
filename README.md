@@ -52,7 +52,8 @@ Bridgeport:
 7. Generates cloud connector exports for Claude custom connectors, ChatGPT custom apps, Anthropic Messages API MCP connectors, Mistral Work/Vibe custom connectors, and Vibe Code CLI.
 8. Shows active sessions, enabled connector count, public exposure state, and connector source paths in the UI.
 9. Resolves only the secrets each connector declares or references from process env, a mounted 1Password Environment `.env` file, Bridgeport config env, connector env, and `op://` references. Defaults are seeded from `~/.claude/.env` so Bridgeport stores references, not plaintext secrets.
-10. Serves connector icons from bundled local assets, declared HTTPS logo URLs, or deterministic SVG fallbacks so cloud connector cards do not fall back to tunnel-provider branding.
+10. Serves connector icons from bundled local assets, declared HTTPS logo URLs, or deterministic SVG fallbacks so cloud connector cards do not fall back to tunnel-provider branding. Icons follow the same exposure rules as MCP routes (enabled connectors locally, Public-toggled connectors on the tunnel hostname) and carry `ETag` validators so provider caches refresh when artwork changes.
+11. Shows a per-connector **Step-by-Step Setup** guide in the Cloud Connectors pane with numbered instructions and one-click copy buttons for everything Claude, ChatGPT/Codex, and Mistral ask for during custom-connector setup.
 
 ## Quick Start
 
@@ -193,7 +194,7 @@ ChatGPT custom apps, Claude custom connectors, and Mistral custom connectors are
 
 Oliver's current private deployment exposes `ynab-mcp-server` at `https://mcp.amesvt.com/mcp/ynab`. Apple Notes is discovered and available locally, but it is not exposed publicly unless the Public toggle is deliberately enabled.
 
-Claude custom connectors use Bridgeport's built-in OAuth 2.1 authorization-code flow with PKCE and dynamic client registration. The remote MCP URL is the normal endpoint, for example `https://mcp.example.com/mcp/ynab`; Claude discovers Bridgeport's authorization and token endpoints from the protected-resource metadata advertised on 401 responses. The Bridgeport approval page requires the Bridgeport token before it issues an OAuth authorization code, so keep the public hostname behind Cloudflare Access or equivalent policy and treat that token as a secret.
+Claude custom connectors use Bridgeport's built-in OAuth 2.1 authorization-code flow with PKCE and dynamic client registration. The remote MCP URL is the normal endpoint, for example `https://mcp.example.com/mcp/ynab`; Claude discovers Bridgeport's authorization and token endpoints from the protected-resource metadata advertised on 401 responses. The Bridgeport approval page requires the Bridgeport token before it issues an OAuth authorization code, so keep the public hostname behind Cloudflare Access or equivalent policy and treat that token as a secret. Failed approval attempts are delayed to slow online guessing, and token endpoint responses are marked `Cache-Control: no-store` per RFC 6749.
 
 ChatGPT custom apps currently require an OAuth front door for production. Bridgeport exports a query-token URL only when fallback is explicitly enabled, otherwise it copies the normal MCP URL and marks the ChatGPT entry as not ready.
 
@@ -238,6 +239,8 @@ Provider authentication summary:
 | Anthropic Messages API | `authorization_token` | Exports header-style bearer auth without URL tokens |
 | Mistral Work/Vibe custom connectors | HTTP Bearer Token | Exports server URL plus `Bearer <token>` |
 | Vibe Code CLI | Authorization header in TOML | Exports `streamable-http` TOML with bearer header |
+
+The **Cloud Connectors** pane shows a collapsible **Step-by-Step Setup** guide per public connector. Each provider section lists the exact clicks in that provider's UI and pairs them with copy buttons for the values that step needs: the MCP URL and Bridgeport token for Claude, the MCP URL for ChatGPT/Codex, and the MCP URL, `Bearer` header value, or full Mistral JSON payload for Mistral. Copy buttons flash "Copied" so it is always clear the value is on the clipboard.
 
 Before creating a provider connector, search the provider's connector list for existing Bridgeport entries and remove or reuse stale test entries. Keep exactly one Bridgeport connector per exposed MCP in each provider. Do not create Bridgeport duplicates for HTML/web-native connectors that already have hosted provider integrations.
 
@@ -329,9 +332,9 @@ Connector icon assets:
 GET /icons/<connector>
 ```
 
-Bridgeport advertises icon metadata in MCP `initialize` responses with `serverInfo.icons` and `serverInfo.iconUrl`. Mistral exports and initialize icon URLs include a deterministic `?v=` cache key so cloud providers refresh stale connector-card artwork after local assets change.
+Bridgeport advertises icon metadata in MCP `initialize` responses with `serverInfo.icons` and `serverInfo.iconUrl`. Public connectors advertise the tunnel icon URL; private connectors advertise a localhost icon URL so local MCP clients still resolve artwork. Mistral exports and initialize icon URLs include a deterministic `?v=` cache key, and the icon endpoint answers conditional requests with `ETag`/`304 Not Modified`, so cloud providers refresh stale connector-card artwork after local assets change. Icon files are matched from source-repo assets first (`sources/<name>/assets/icon.png`), then wrapper `assets`, `images`, `public`, and repo-root `icon.*`/`logo.*` files, then HTTPS logo URLs declared in plugin manifests, and finally a generated monogram SVG.
 
-Session lifecycle: `Mcp-Session-Id` values are scoped to the connector that issued them, `DELETE` closes the session and stops its connector subprocess, and sessions with no open streams and no traffic for 10 minutes are reaped automatically so disconnected clients cannot leak connector processes. A client that reuses a reaped session id receives 404 and re-initializes per the Streamable HTTP spec.
+Session lifecycle: `Mcp-Session-Id` values are scoped to the connector that issued them, `DELETE` closes the session and stops its connector subprocess, and sessions with no open streams and no traffic for 10 minutes are reaped automatically so disconnected clients cannot leak connector processes. A client that reuses a reaped session id receives 404 and re-initializes per the Streamable HTTP spec. The daemon caps live sessions at 64 and answers further session-opening requests with `503` and `Retry-After`, so a reconnect-looping client cannot exhaust the Mac with connector subprocesses. Connector discovery results are cached for two seconds on the serving path, keeping per-request latency flat without a filesystem walk per request.
 
 OAuth dynamic client registrations and issued access tokens are persisted privately under `~/.config/bridgeport/`, so connected Claude custom connectors survive daemon restarts without re-authorizing.
 
@@ -376,7 +379,7 @@ See [CLOUDFLARE.md](CLOUDFLARE.md) for tunnel setup and security recommendations
 
 ## Requirements
 
-- macOS 26 Tahoe
+- macOS 26 Tahoe or later
 - Swift 6.2+
 - `cloudflared` for public connector exposure through Cloudflare Tunnel
 - 1Password CLI for `op://` secret resolution
@@ -390,8 +393,8 @@ swift build
 swift test
 python3 test_client.py
 script/build_and_run.sh --verify
-script/package_release.sh 1.0
-script/notarize_release.sh dist/release/Bridgeport-1.0.dmg
+script/package_release.sh 1.0.5
+script/notarize_release.sh dist/release/Bridgeport-1.0.5.dmg
 ```
 
 `test_client.py` uses an isolated `BRIDGEPORT_CONFIG_HOME` and a free local port so it can run alongside an installed Bridgeport daemon.

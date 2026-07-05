@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LaunchAgentCommandResult {
+public struct LaunchAgentCommandResult: Sendable {
     public let status: Int32
     public let stdout: String
     public let stderr: String

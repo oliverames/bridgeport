@@ -155,7 +155,7 @@ For reliable Mistral connector-card artwork, use the generated Mistral API creat
 
 Bridgeport returns `WWW-Authenticate: Bearer realm="Bridgeport", resource_metadata="..."` on unauthorized requests so OAuth-capable clients can discover authorization metadata and Bearer-capable clients can detect header authentication.
 
-Bridgeport also serves connector-card artwork at `/icons/<connector>`. MCP `initialize` responses include `serverInfo.icons` and `serverInfo.iconUrl` with a deterministic `?v=` cache key, and the Mistral export carries the same cache-busted icon endpoint as `icon_url` for clients that require artwork during connector registration.
+Bridgeport also serves connector-card artwork at `/icons/<connector>`. Icons follow the same exposure rules as MCP routes: enabled connectors are served on localhost, and requests arriving via the public hostname require the connector's Public toggle. MCP `initialize` responses include `serverInfo.icons` and `serverInfo.iconUrl` with a deterministic `?v=` cache key, the endpoint answers conditional requests with `ETag`/`304 Not Modified`, and the Mistral export carries the same cache-busted icon endpoint as `icon_url` for clients that require artwork during connector registration.
 
 ## Cloudflare Controls
 

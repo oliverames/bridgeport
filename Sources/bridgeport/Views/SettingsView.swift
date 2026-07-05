@@ -93,7 +93,7 @@ struct SettingsView: View {
         }
         .navigationSplitViewStyle(.prominentDetail)
         .settingsToolbarMaterial()
-        .frame(minWidth: 760, idealWidth: 980, minHeight: 520, idealHeight: 680)
+        .frame(minWidth: 860, idealWidth: 980, minHeight: 560, idealHeight: 680)
     }
 
     private var filteredConnectors: [Connector] {
@@ -167,7 +167,7 @@ struct SettingsView: View {
                     selection = .sources
                     mirrorMCPs()
                 } label: {
-                    Label("Mirror MCPs From...", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Mirror MCPs From…", systemImage: "arrow.triangle.2.circlepath")
                 }
             }
 
@@ -236,12 +236,8 @@ struct SettingsView: View {
                             appState.isShowingToken.toggle()
                         }
 
-                        Button {
-                            let pasteboard = NSPasteboard.general
-                            pasteboard.clearContents()
-                            pasteboard.setString(appState.token, forType: .string)
-                        } label: {
-                            Label("Copy", systemImage: "doc.on.doc")
+                        CopyButton(title: "Copy", systemImage: "doc.on.doc") {
+                            appState.token
                         }
                     }
                 }
@@ -395,7 +391,7 @@ struct SettingsView: View {
                 }
 
                 SettingsField(label: "Token op:// Ref") {
-                    SecureField("Optional op://Development/... reference", text: $appState.cloudflare.apiTokenOPReference)
+                    TextField("Optional op://Development/… reference", text: $appState.cloudflare.apiTokenOPReference)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await appState.save(restartDaemon: false) } }
                 }
@@ -468,10 +464,8 @@ struct SettingsView: View {
                         Label("Open Tunnel Docs", systemImage: "safari")
                     }
 
-                    Button {
-                        copy(CloudflareManager.publicBaseURL(for: appState.cloudflare))
-                    } label: {
-                        Label("Copy Public Base URL", systemImage: "doc.on.doc")
+                    CopyButton(title: "Copy Public Base URL", systemImage: "doc.on.doc") {
+                        CloudflareManager.publicBaseURL(for: appState.cloudflare)
                     }
                     .disabled(appState.cloudflare.hostname.isEmpty)
                 }
@@ -492,27 +486,28 @@ struct SettingsView: View {
             }
 
             ActionGrid(minimumItemWidth: 190) {
-                Button {
-                    copy(appState.cloudConnectorExportJSON())
-                } label: {
-                    Label("Copy Cloud Export JSON", systemImage: "doc.on.doc")
+                CopyButton(title: "Copy Cloud Export JSON", systemImage: "doc.on.doc") {
+                    appState.cloudConnectorExportJSON()
                 }
                 .disabled(appState.publicCloudConnectors.isEmpty)
 
-                Button {
-                    copy(appState.allVibeCodeTOML())
-                } label: {
-                    Label("Copy Vibe TOML", systemImage: "terminal")
+                CopyButton(title: "Copy Vibe TOML", systemImage: "terminal") {
+                    appState.allVibeCodeTOML()
                 }
                 .disabled(appState.publicCloudConnectors.isEmpty)
+            }
 
-                if !appState.allowQueryTokenAuth {
-                    Button {
-                        appState.allowQueryTokenAuth = true
-                        Task { await appState.save() }
-                    } label: {
-                        Label("Enable Query-Token Fallback", systemImage: "link.badge.plus")
+            SettingsGroup(title: "Compatibility") {
+                Toggle(isOn: $appState.allowQueryTokenAuth) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Query-String Token Fallback")
+                        Text("Puts the token in the URL for legacy clients that cannot send Authorization headers. Leave off for production; this is the same setting as in Security.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                }
+                .onChange(of: appState.allowQueryTokenAuth) {
+                    Task { await appState.save() }
                 }
             }
 
@@ -568,7 +563,7 @@ struct SettingsView: View {
                     HStack {
                         TextField("~/.config/bridgeport/1password.env", text: $appState.onePasswordEnvironment.localEnvFilePath)
                             .textFieldStyle(.roundedBorder)
-                        Button("Browse...") {
+                        Button("Choose…") {
                             selectOnePasswordEnvFile()
                         }
                     }
@@ -616,7 +611,7 @@ struct SettingsView: View {
                     HStack {
                         TextField("Path to MCP plugin directory", text: $appState.connectorsPath)
                             .textFieldStyle(.roundedBorder)
-                        Button("Browse...") {
+                        Button("Choose…") {
                             selectPrimarySource()
                         }
                     }
@@ -628,7 +623,7 @@ struct SettingsView: View {
                     Button {
                         mirrorMCPs()
                     } label: {
-                        Label("Mirror MCPs From...", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Mirror MCPs From…", systemImage: "arrow.triangle.2.circlepath")
                     }
 
                     Button {
@@ -714,6 +709,8 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = "Select Primary MCP Source"
+        panel.message = "Select the primary MCP plugin directory."
+        panel.prompt = "Choose"
 
         if panel.runModal() == .OK, let url = panel.url {
             appState.connectorsPath = url.path
@@ -730,6 +727,8 @@ struct SettingsView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.title = "Select Mounted 1Password .env File"
+        panel.message = "Select the mounted 1Password .env file."
+        panel.prompt = "Choose"
 
         if panel.runModal() == .OK, let url = panel.url {
             appState.onePasswordEnvironment.localEnvFilePath = url.path
@@ -743,6 +742,8 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = title
+        panel.message = "\(title): select a plugin folder, .mcp.json, Claude settings.json, or Codex config.toml."
+        panel.prompt = "Choose"
         return panel
     }
 
@@ -772,10 +773,31 @@ struct SettingsView: View {
         }
     }
 
-    private func copy(_ value: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(value, forType: .string)
+}
+
+/// Copy-to-pasteboard button with transient confirmation, per HIG feedback
+/// guidance: the label flips to "Copied" briefly so the user knows it worked.
+private struct CopyButton: View {
+    let title: String
+    let systemImage: String
+    let value: () -> String?
+
+    @State private var isConfirmingCopy = false
+
+    var body: some View {
+        Button {
+            guard let value = value(), !value.isEmpty else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(value, forType: .string)
+            withAnimation { isConfirmingCopy = true }
+            Task {
+                try? await Task.sleep(nanoseconds: 1_400_000_000)
+                withAnimation { isConfirmingCopy = false }
+            }
+        } label: {
+            Label(isConfirmingCopy ? "Copied" : title, systemImage: isConfirmingCopy ? "checkmark.circle.fill" : systemImage)
+        }
     }
 }
 
@@ -851,7 +873,6 @@ private struct ActionGrid<Content: View>: View {
                 content
             }
         }
-        .controlSize(.regular)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -974,16 +995,12 @@ private struct ConnectorRow: View {
                 }
 
                 ActionGrid(minimumItemWidth: 138) {
-                    Button {
-                        copy(appState.endpointURL(for: connector, publicEndpoint: false))
-                    } label: {
-                        Label("Copy Local", systemImage: "link")
+                    CopyButton(title: "Copy Local", systemImage: "link") {
+                        appState.endpointURL(for: connector, publicEndpoint: false)
                     }
 
-                    Button {
-                        copy(appState.endpointURL(for: connector, publicEndpoint: true))
-                    } label: {
-                        Label("Copy Public", systemImage: "globe")
+                    CopyButton(title: "Copy Public", systemImage: "globe") {
+                        appState.endpointURL(for: connector, publicEndpoint: true)
                     }
                     .disabled(!isPublic || appState.publicBaseURL.isEmpty)
                 }
@@ -1040,12 +1057,6 @@ private struct ConnectorRow: View {
     private func isSensitiveKey(_ name: String) -> Bool {
         let lower = name.lowercased()
         return lower.contains("token") || lower.contains("key") || lower.contains("secret") || lower.contains("password")
-    }
-
-    private func copy(_ value: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(value, forType: .string)
     }
 }
 
@@ -1129,44 +1140,38 @@ private struct CloudConnectorRow: View {
             }
 
             ActionGrid(minimumItemWidth: 190) {
-                Button {
-                    if let url = appState.chatGPTCustomAppURL(for: connector) {
-                        copy(url)
-                    }
-                } label: {
-                    Label("Copy ChatGPT URL", systemImage: "bubble.left.and.text.bubble.right")
-                }
-                .disabled(appState.chatGPTCustomAppURL(for: connector) == nil)
-
-                Button {
-                    if let url = appState.claudeCustomConnectorURL(for: connector) {
-                        copy(url)
-                    }
-                } label: {
-                    Label("Copy Claude URL", systemImage: "sparkles")
+                CopyButton(title: "Copy Claude URL", systemImage: "sparkles") {
+                    appState.claudeCustomConnectorURL(for: connector)
                 }
                 .disabled(appState.claudeCustomConnectorURL(for: connector) == nil)
 
-                Button {
-                    copy(appState.anthropicMessagesAPIJSON(for: connector))
-                } label: {
-                    Label("Copy Anthropic JSON", systemImage: "curlybraces")
+                CopyButton(title: "Copy ChatGPT URL", systemImage: "bubble.left.and.text.bubble.right") {
+                    appState.chatGPTCustomAppURL(for: connector)
+                }
+                .disabled(appState.chatGPTCustomAppURL(for: connector) == nil)
+
+                CopyButton(title: "Copy Anthropic JSON", systemImage: "curlybraces") {
+                    appState.anthropicMessagesAPIJSON(for: connector)
                 }
 
-                Button {
-                    copy(appState.mistralCustomConnectorJSON(for: connector))
-                } label: {
-                    Label("Copy Mistral JSON", systemImage: "square.grid.2x2")
+                CopyButton(title: "Copy Mistral JSON", systemImage: "square.grid.2x2") {
+                    appState.mistralCustomConnectorJSON(for: connector)
                 }
 
-                Button {
-                    copy(appState.vibeCodeTOML(for: connector))
-                } label: {
-                    Label("Copy Vibe TOML", systemImage: "terminal")
+                CopyButton(title: "Copy Vibe TOML", systemImage: "terminal") {
+                    appState.vibeCodeTOML(for: connector)
                 }
             }
 
-            Text(appState.allowQueryTokenAuth ? "Claude uses Bridgeport OAuth. ChatGPT can use OAuth or the private query-token fallback for compatibility testing. Anthropic API, Mistral, and Vibe should use Bearer auth." : "Claude uses Bridgeport OAuth. ChatGPT OAuth is the production path. Anthropic API, Mistral, and Vibe exports use Bearer auth.")
+            DisclosureGroup {
+                ConnectorSetupGuide(appState: appState, connector: connector)
+            } label: {
+                Text("Step-by-Step Setup")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(appState.allowQueryTokenAuth ? "Claude uses Bridgeport OAuth. ChatGPT and Codex can use OAuth or the private query-token fallback for compatibility testing. Anthropic API, Mistral, and Vibe should use Bearer auth." : "Claude uses Bridgeport OAuth. ChatGPT and Codex use OAuth as the production path. Anthropic API, Mistral, and Vibe exports use Bearer auth.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1174,10 +1179,96 @@ private struct CloudConnectorRow: View {
         .padding(14)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
     }
+}
 
-    private func copy(_ value: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(value, forType: .string)
+/// Numbered, provider-specific instructions so connecting a Bridgeport MCP to
+/// a web client is a paste-and-click flow, with every needed value one copy
+/// button away.
+private struct ConnectorSetupGuide: View {
+    @Bindable var appState: AppState
+    let connector: Connector
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            GuideSection(
+                title: "Claude (claude.ai, desktop, and mobile)",
+                steps: [
+                    "In Claude, open Settings > Connectors and choose Add custom connector.",
+                    "Name the connector and paste the MCP URL, then choose Add.",
+                    "Choose Connect. Bridgeport's approval page opens; paste your Bridgeport token and choose Authorize."
+                ]
+            ) {
+                CopyButton(title: "Copy MCP URL", systemImage: "link") {
+                    appState.claudeCustomConnectorURL(for: connector)
+                }
+                CopyButton(title: "Copy Bridgeport Token", systemImage: "key") {
+                    appState.token
+                }
+            }
+
+            GuideSection(
+                title: "ChatGPT and Codex (web)",
+                steps: [
+                    "In ChatGPT, open Settings > Connectors and enable Developer mode, then choose Create. Codex on the web uses the same connectors.",
+                    "Name the connector and paste the MCP URL.",
+                    appState.allowQueryTokenAuth
+                        ? "The copied URL carries the query-token fallback for private compatibility testing."
+                        : "Production ChatGPT connectors need OAuth; the query-token fallback is currently off."
+                ]
+            ) {
+                CopyButton(title: "Copy MCP URL", systemImage: "link") {
+                    appState.chatGPTCustomAppURL(for: connector)
+                }
+            }
+
+            GuideSection(
+                title: "Mistral (Le Chat and Work)",
+                steps: [
+                    "In Le Chat, open Connectors and add a custom MCP connector.",
+                    "Paste the MCP URL, set Authentication to HTTP Bearer Token, and paste the header value.",
+                    "For branded connector-card artwork, create the connector from the Mistral JSON payload instead; it carries Bridgeport's icon URL."
+                ]
+            ) {
+                CopyButton(title: "Copy MCP URL", systemImage: "link") {
+                    appState.endpointURL(for: connector, publicEndpoint: true)
+                }
+                CopyButton(title: "Copy Bearer Header", systemImage: "key.horizontal") {
+                    appState.bearerHeaderValue
+                }
+                CopyButton(title: "Copy Mistral JSON", systemImage: "curlybraces") {
+                    appState.mistralCustomConnectorJSON(for: connector)
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+}
+
+private struct GuideSection<Actions: View>: View {
+    let title: String
+    let steps: [String]
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(index + 1).")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Text(step)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            ActionGrid(minimumItemWidth: 170) {
+                actions
+            }
+            .controlSize(.small)
+        }
     }
 }

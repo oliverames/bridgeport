@@ -29,7 +29,7 @@ final class SettingsWindowCoordinator: NSObject {
         }
 
         let item = NSMenuItem(
-            title: "Settings...",
+            title: "Settings…",
             action: #selector(openSettingsFromMenu(_:)),
             keyEquivalent: ","
         )
