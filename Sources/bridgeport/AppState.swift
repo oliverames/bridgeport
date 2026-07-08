@@ -142,7 +142,8 @@ public final class AppState {
 
     public func setPublicPath(_ path: String, for name: String) async {
         var settings = connectorSettings(for: name)
-        settings.publicPath = ConfigManager.normalizedRoutePath(path)
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.publicPath = trimmed.isEmpty ? nil : ConfigManager.normalizedRoutePath(trimmed)
         connectorSettings[name] = settings
         await save()
     }

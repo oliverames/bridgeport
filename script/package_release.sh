@@ -69,6 +69,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>APPL</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright 2026 Oliver Ames. All rights reserved.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

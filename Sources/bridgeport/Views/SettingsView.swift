@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case dashboard = "Dashboard"
@@ -47,12 +48,27 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sources: "folder.badge.gearshape"
         }
     }
+
+    var shortcutKey: KeyEquivalent {
+        switch self {
+        case .dashboard: "1"
+        case .connectors: "2"
+        case .security: "3"
+        case .cloudflare: "4"
+        case .cloudConnectors: "5"
+        case .onePassword: "6"
+        case .sources: "7"
+        }
+    }
 }
 
 struct SettingsView: View {
     @Bindable var appState: AppState
     @State private var selection: SettingsPane = SettingsPane.initialSelection()
     @State private var connectorSearchText = ""
+    @State private var deferredSaveTask: Task<Void, Never>?
+    @State private var isCloudflareAdvancedExpanded = false
+    @FocusState private var connectorSearchFocused: Bool
 
     var body: some View {
         NavigationSplitView {
@@ -62,6 +78,7 @@ struct SettingsView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 220)
             .listStyle(.sidebar)
+            .settingsSidebarMaterial()
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -89,11 +106,14 @@ struct SettingsView: View {
             }
             .background(.background)
             .settingsScrollEdgeTreatment()
-            .navigationTitle(selection.rawValue)
+            .navigationTitle("Bridgeport Settings")
         }
         .navigationSplitViewStyle(.prominentDetail)
         .settingsToolbarMaterial()
         .frame(minWidth: 860, idealWidth: 980, minHeight: 560, idealHeight: 680)
+        .overlay(alignment: .topLeading) {
+            keyboardShortcutOverlay
+        }
     }
 
     private var filteredConnectors: [Connector] {
@@ -102,6 +122,73 @@ struct SettingsView: View {
         return appState.discoveredConnectors.filter { connector in
             connector.name.localizedCaseInsensitiveContains(query) ||
             connector.configPath.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var queryTokenFallbackCaption: String {
+        "Legacy clients can pass the token in the URL. This same setting appears in Security and Cloud Connectors."
+    }
+
+    private var connectorSearchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField("Find connector", text: $connectorSearchText)
+                .textFieldStyle(.plain)
+                .focused($connectorSearchFocused)
+
+            if !connectorSearchText.isEmpty {
+                Button {
+                    connectorSearchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear connector search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator.opacity(0.6)))
+        .frame(maxWidth: 360, alignment: .leading)
+    }
+
+    private var keyboardShortcutOverlay: some View {
+        VStack {
+            ForEach(SettingsPane.allCases) { pane in
+                Button(pane.rawValue) {
+                    selection = pane
+                }
+                .keyboardShortcut(pane.shortcutKey, modifiers: .command)
+            }
+
+            Button("Find Connector") {
+                selection = .connectors
+                DispatchQueue.main.async {
+                    connectorSearchFocused = true
+                }
+            }
+            .keyboardShortcut("f", modifiers: .command)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private func scheduleSave(restartDaemon: Bool = true) {
+        deferredSaveTask?.cancel()
+        deferredSaveTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 650_000_000)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            await appState.save(restartDaemon: restartDaemon)
         }
     }
 
@@ -134,7 +221,11 @@ struct SettingsView: View {
                 }
             }
 
-            ActionGrid(minimumItemWidth: 170) {
+            SettingsGroup(title: "Service") {
+                Text("Refresh status or restart the local Bridgeport daemon.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Button {
                     Task {
                         await appState.reload()
@@ -154,20 +245,6 @@ struct SettingsView: View {
                     }
                 } label: {
                     Label(appState.isDaemonRunning ? "Restart Daemon" : "Start Daemon", systemImage: appState.isDaemonRunning ? "arrow.clockwise.circle" : "play.circle")
-                }
-
-                Button {
-                    selection = .sources
-                    importMCPs()
-                } label: {
-                    Label("Import MCPs", systemImage: "square.and.arrow.down")
-                }
-
-                Button {
-                    selection = .sources
-                    mirrorMCPs()
-                } label: {
-                    Label("Mirror MCPs From…", systemImage: "arrow.triangle.2.circlepath")
                 }
             }
 
@@ -194,6 +271,7 @@ struct SettingsView: View {
     private var connectorsPane: some View {
         VStack(alignment: .leading, spacing: 16) {
             PaneHeader(title: "Connectors", subtitle: "Enable local MCP servers, expose selected endpoints, and fill required environment values.")
+            connectorSearchField
 
             if appState.discoveredConnectors.isEmpty {
                 ContentUnavailableView {
@@ -215,7 +293,6 @@ struct SettingsView: View {
                 }
             }
         }
-        .searchable(text: $connectorSearchText, placement: .toolbar, prompt: "Find connector")
     }
 
     private var securityPane: some View {
@@ -255,7 +332,7 @@ struct SettingsView: View {
                 Toggle(isOn: $appState.allowQueryTokenAuth) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Query-String Token Fallback")
-                        Text("Use only for legacy MCP clients that cannot send Authorization headers.")
+                        Text(queryTokenFallbackCaption)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -270,11 +347,9 @@ struct SettingsView: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 100)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
-                Button {
-                    Task { await appState.save() }
-                } label: {
-                    Label("Save Origins", systemImage: "checkmark.circle")
-                }
+                    .onChange(of: appState.allowedOriginsText) {
+                        scheduleSave()
+                    }
             }
         }
     }
@@ -348,52 +423,67 @@ struct SettingsView: View {
                         .onSubmit { Task { await appState.save(restartDaemon: false) } }
                 }
 
-                SettingsField(label: "Tunnel ID") {
-                    TextField("Created or discovered by Bridgeport", text: $appState.cloudflare.tunnelId)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
-                }
+                DisclosureGroup(isExpanded: $isCloudflareAdvancedExpanded) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SettingsField(label: "Tunnel ID") {
+                            TextField("Created or discovered by Bridgeport", text: $appState.cloudflare.tunnelId)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                        }
 
-                SettingsField(label: "Account ID") {
-                    TextField("Optional Cloudflare account ID", text: $appState.cloudflare.accountId)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
-                }
+                        SettingsField(label: "Account ID") {
+                            TextField("Optional Cloudflare account ID", text: $appState.cloudflare.accountId)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                        }
 
-                SettingsField(label: "Zone ID") {
-                    TextField("Optional Cloudflare zone ID", text: $appState.cloudflare.zoneId)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
-                }
+                        SettingsField(label: "Zone ID") {
+                            TextField("Optional Cloudflare zone ID", text: $appState.cloudflare.zoneId)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                        }
 
-                SettingsField(label: "cloudflared") {
-                    TextField("/opt/homebrew/bin/cloudflared", text: $appState.cloudflare.cloudflaredPath)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false); await appState.refreshCloudflareStatus() } }
-                }
+                        SettingsField(label: "cloudflared") {
+                            PathEditingField(
+                                placeholder: "/opt/homebrew/bin/cloudflared",
+                                text: $appState.cloudflare.cloudflaredPath
+                            )
+                            .onSubmit { Task { await appState.save(restartDaemon: false); await appState.refreshCloudflareStatus() } }
+                        }
 
-                SettingsField(label: "Config File") {
-                    TextField("~/.config/bridgeport/cloudflared/config.yml", text: $appState.cloudflare.configFilePath)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
-                }
+                        SettingsField(label: "Config File") {
+                            PathEditingField(
+                                placeholder: "~/.config/bridgeport/cloudflared/config.yml",
+                                text: $appState.cloudflare.configFilePath
+                            )
+                            .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                        }
 
-                SettingsField(label: "Credentials File") {
-                    TextField("Created by cloudflared tunnel create", text: $appState.cloudflare.credentialsFilePath)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false); await appState.refreshCloudflareStatus() } }
-                }
+                        SettingsField(label: "Credentials File") {
+                            PathEditingField(
+                                placeholder: "Created by cloudflared tunnel create",
+                                text: $appState.cloudflare.credentialsFilePath
+                            )
+                            .onSubmit { Task { await appState.save(restartDaemon: false); await appState.refreshCloudflareStatus() } }
+                        }
 
-                SettingsField(label: "Token Env Var") {
-                    TextField("CLOUDFLARE_API_TOKEN", text: $appState.cloudflare.apiTokenEnvVar)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
-                }
+                        SettingsField(label: "Token Env Var") {
+                            TextField("CLOUDFLARE_API_TOKEN", text: $appState.cloudflare.apiTokenEnvVar)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                        }
 
-                SettingsField(label: "Token op:// Ref") {
-                    TextField("Optional op://Development/… reference", text: $appState.cloudflare.apiTokenOPReference)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                        SettingsField(label: "Token op:// Ref") {
+                            TextField("Optional op://Development/… reference", text: $appState.cloudflare.apiTokenOPReference)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { Task { await appState.save(restartDaemon: false) } }
+                        }
+                    }
+                    .padding(.top, 6)
+                } label: {
+                    Label("Advanced Cloudflare Settings", systemImage: "gearshape")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
 
                 ActionGrid(minimumItemWidth: 180) {
@@ -438,7 +528,7 @@ struct SettingsView: View {
             }
 
             SettingsGroup(title: "Routing") {
-                Text("Bridgeport uses one named Cloudflare Tunnel hostname and per-connector path routing. cloudflared forwards \(appState.cloudflare.hostname.isEmpty ? "the configured hostname" : appState.cloudflare.hostname) to \(appState.localBaseURL); Bridgeport serves only enabled public connectors and returns 404 for disabled or private connectors on the public hostname.")
+                Text("One Cloudflare hostname forwards to \(appState.localBaseURL); only connectors with Public enabled are exposed.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -450,10 +540,11 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                LabeledContent("Created by Bridgeport") {
-                    Text(appState.cloudflare.createdByBridgeport ? "Yes" : "No")
-                        .foregroundStyle(.secondary)
-                }
+                Label(
+                    appState.cloudflare.createdByBridgeport ? "Bridgeport created this tunnel." : "Bridgeport did not create this tunnel.",
+                    systemImage: appState.cloudflare.createdByBridgeport ? "checkmark.circle" : "info.circle"
+                )
+                .foregroundStyle(.secondary)
             }
 
             SettingsGroup(title: "Reference") {
@@ -480,7 +571,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Public connector requirements")
                     .font(.headline)
-                Text("Cloud connector portals reach Bridgeport from their cloud infrastructure, so each connector needs a public base URL, Cloudflare routing, and the connector's Public toggle enabled.")
+                Text("Each cloud connector needs a public base URL and its Public toggle enabled.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -501,7 +592,7 @@ struct SettingsView: View {
                 Toggle(isOn: $appState.allowQueryTokenAuth) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Query-String Token Fallback")
-                        Text("Puts the token in the URL for legacy clients that cannot send Authorization headers. Leave off for production; this is the same setting as in Security.")
+                        Text(queryTokenFallbackCaption)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -547,22 +638,38 @@ struct SettingsView: View {
                 SettingsField(label: "Environment") {
                     TextField("Bridgeport", text: $appState.onePasswordEnvironment.environmentName)
                         .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save() } }
+                        .onChange(of: appState.onePasswordEnvironment.environmentName) {
+                            scheduleSave()
+                        }
                 }
 
                 SettingsField(label: "Account ID") {
                     TextField("1Password account UUID", text: $appState.onePasswordEnvironment.accountId)
                         .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save() } }
+                        .onChange(of: appState.onePasswordEnvironment.accountId) {
+                            scheduleSave()
+                        }
                 }
 
                 SettingsField(label: "Environment ID") {
                     TextField("Environment UUID", text: $appState.onePasswordEnvironment.environmentId)
                         .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await appState.save() } }
+                        .onChange(of: appState.onePasswordEnvironment.environmentId) {
+                            scheduleSave()
+                        }
                 }
 
                 SettingsField(label: "Local .env") {
                     HStack {
                         TextField("~/.config/bridgeport/1password.env", text: $appState.onePasswordEnvironment.localEnvFilePath)
                             .textFieldStyle(.roundedBorder)
+                            .onSubmit { Task { await appState.save() } }
+                            .onChange(of: appState.onePasswordEnvironment.localEnvFilePath) {
+                                scheduleSave()
+                            }
                         Button("Choose…") {
                             selectOnePasswordEnvFile()
                         }
@@ -570,12 +677,6 @@ struct SettingsView: View {
                 }
 
                 ActionGrid(minimumItemWidth: 180) {
-                    Button {
-                        Task { await appState.save() }
-                    } label: {
-                        Label("Save 1Password Settings", systemImage: "checkmark.circle")
-                    }
-
                     Button {
                         NSWorkspace.shared.open(URL(string: "onepassword://settings/labs")!)
                     } label: {
@@ -609,8 +710,16 @@ struct SettingsView: View {
             SettingsGroup(title: "Primary Source") {
                 SettingsField(label: "Path") {
                     HStack {
-                        TextField("Path to MCP plugin directory", text: $appState.connectorsPath)
-                            .textFieldStyle(.roundedBorder)
+                        PathEditingField(
+                            placeholder: "Path to MCP plugin directory",
+                            text: $appState.connectorsPath
+                        )
+                        .onSubmit {
+                            Task {
+                                await appState.save()
+                                await appState.reload()
+                            }
+                        }
                         Button("Choose…") {
                             selectPrimarySource()
                         }
@@ -625,15 +734,6 @@ struct SettingsView: View {
                     } label: {
                         Label("Mirror MCPs From…", systemImage: "arrow.triangle.2.circlepath")
                     }
-
-                    Button {
-                        Task {
-                            await appState.save()
-                            await appState.reload()
-                        }
-                    } label: {
-                        Label("Apply Sources", systemImage: "checkmark.circle")
-                    }
                 }
 
                 if appState.mirroredSourcePaths.isEmpty {
@@ -645,17 +745,6 @@ struct SettingsView: View {
                             Task { await appState.removeMirroredPath(path) }
                         }
                     }
-                }
-
-                DisclosureGroup {
-                    TextEditor(text: $appState.additionalConnectorPathsText)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 110)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
-                } label: {
-                    Text("Edit Source Paths")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -727,8 +816,9 @@ struct SettingsView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.title = "Select Mounted 1Password .env File"
-        panel.message = "Select the mounted 1Password .env file."
+        panel.message = "Choose the mounted 1Password .env file."
         panel.prompt = "Choose"
+        panel.allowedContentTypes = [.plainText, .text]
 
         if panel.runModal() == .OK, let url = panel.url {
             appState.onePasswordEnvironment.localEnvFilePath = url.path
@@ -742,9 +832,20 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = title
-        panel.message = "\(title): select a plugin folder, .mcp.json, Claude settings.json, or Codex config.toml."
-        panel.prompt = "Choose"
+        panel.message = "Choose a plugin folder or connector settings file."
+        panel.prompt = title.localizedCaseInsensitiveContains("Import") ? "Import" : "Mirror"
+        panel.allowedContentTypes = sourcePanelContentTypes
         return panel
+    }
+
+    private var sourcePanelContentTypes: [UTType] {
+        [
+            .json,
+            .propertyList,
+            .plainText,
+            UTType(filenameExtension: "toml"),
+            UTType(filenameExtension: "mcp")
+        ].compactMap { $0 }
     }
 
     private func openCloudflareDocs() {
@@ -806,12 +907,15 @@ private struct PaneHeader: View {
     let subtitle: String
 
     var body: some View {
-        Text(subtitle)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel("\(title): \(subtitle)")
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.title2.weight(.semibold))
+            Text(subtitle)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -855,6 +959,75 @@ private struct SettingsField<Content: View>: View {
     }
 }
 
+private struct PathEditingField: View {
+    let placeholder: String
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.roundedBorder)
+                .help(text.isEmpty ? placeholder : text)
+
+            Button {
+                revealInFinder(path: text)
+            } label: {
+                Image(systemName: "folder")
+            }
+            .buttonStyle(.borderless)
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Show in Finder")
+            .accessibilityLabel("Show in Finder")
+        }
+    }
+}
+
+private struct PathText: View {
+    let path: String
+
+    var body: some View {
+        Text(path)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .textSelection(.enabled)
+            .help(path)
+            .contextMenu {
+                Button("Show in Finder") {
+                    revealInFinder(path: path)
+                }
+            }
+    }
+}
+
+private struct MonospacedValueText: View {
+    let value: String
+
+    var body: some View {
+        Text(value)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .textSelection(.enabled)
+            .help(value)
+    }
+}
+
+private struct RouteValue: View {
+    let routePath: String
+
+    var body: some View {
+        Text("/mcp/\(routePath)")
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .textSelection(.enabled)
+            .help("/mcp/\(routePath)")
+    }
+}
+
 private struct ActionGrid<Content: View>: View {
     let minimumItemWidth: CGFloat
     @ViewBuilder var content: Content
@@ -879,6 +1052,11 @@ private struct ActionGrid<Content: View>: View {
 
 private extension View {
     @ViewBuilder
+    func settingsSidebarMaterial() -> some View {
+        self.background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
     func settingsToolbarMaterial() -> some View {
         if #available(macOS 15.0, *) {
             self
@@ -898,6 +1076,19 @@ private extension View {
         } else {
             self
         }
+    }
+}
+
+private func revealInFinder(path: String) {
+    let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+
+    let expanded = NSString(string: trimmed).expandingTildeInPath
+    let url = URL(fileURLWithPath: expanded).standardizedFileURL
+    if FileManager.default.fileExists(atPath: url.path) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    } else {
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
     }
 }
 
@@ -939,31 +1130,33 @@ private struct ConnectorRow: View {
         let settings = appState.connectorSettings(for: connector.name)
         let activeCount = appState.activeSessions(for: connector)
         let isPublic = settings.exposePublicly
+        let routePath = ConfigManager.normalizedRoutePath(settings.publicPath ?? connector.name)
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
-                StatusDot(isActive: activeCount > 0)
+                ActivityIndicator(isActive: activeCount > 0)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(connector.name)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(connector.configPath)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    PathText(path: connector.configPath)
                 }
 
                 Spacer()
 
-                StatusPill(text: connector.sourceKind.rawValue.capitalized, systemImage: connector.sourceKind == .imported ? "square.and.arrow.down" : "arrow.triangle.2.circlepath")
-                StatusPill(text: activeCount == 1 ? "1 session" : "\(activeCount) sessions", systemImage: "dot.radiowaves.left.and.right")
+                StatusLine(text: connector.sourceKind.rawValue.capitalized, systemImage: connector.sourceKind == .imported ? "square.and.arrow.down" : "arrow.triangle.2.circlepath")
+                StatusLine(text: activeCount == 1 ? "1 session" : "\(activeCount) sessions", systemImage: "dot.radiowaves.left.and.right")
 
-                Toggle("Enabled", isOn: Binding(
+                Toggle(isOn: Binding(
                     get: { appState.connectorSettings(for: connector.name).enabled },
                     set: { _ in Task { await appState.toggleConnector(connector.name) } }
-                ))
+                )) {
+                    Text("Enable \(connector.name)")
+                }
                 .toggleStyle(.switch)
+                .labelsHidden()
+                .accessibilityLabel("Enable \(connector.name)")
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -976,20 +1169,24 @@ private struct ConnectorRow: View {
                     Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
                         .foregroundStyle(.secondary)
 
-                    TextField(connector.name, text: Binding(
-                        get: { appState.connectorSettings(for: connector.name).publicPath ?? connector.name },
-                        set: { newValue in
-                            var settings = appState.connectorSettings(for: connector.name)
-                            settings.publicPath = newValue
-                            appState.connectorSettings[connector.name] = settings
-                        }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 220)
-                    .disabled(!isPublic)
-                    .onSubmit {
-                        Task {
-                            await appState.setPublicPath(appState.connectorSettings(for: connector.name).publicPath ?? connector.name, for: connector.name)
+                    RouteValue(routePath: routePath)
+
+                    if isPublic {
+                        TextField("Custom route", text: Binding(
+                            get: { appState.connectorSettings(for: connector.name).publicPath ?? "" },
+                            set: { newValue in
+                                var settings = appState.connectorSettings(for: connector.name)
+                                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                settings.publicPath = trimmed.isEmpty ? nil : newValue
+                                appState.connectorSettings[connector.name] = settings
+                            }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 160)
+                        .onSubmit {
+                            Task {
+                                await appState.setPublicPath(appState.connectorSettings(for: connector.name).publicPath ?? "", for: connector.name)
+                            }
                         }
                     }
                 }
@@ -999,10 +1196,11 @@ private struct ConnectorRow: View {
                         appState.endpointURL(for: connector, publicEndpoint: false)
                     }
 
-                    CopyButton(title: "Copy Public", systemImage: "globe") {
-                        appState.endpointURL(for: connector, publicEndpoint: true)
+                    if isPublic && !appState.publicBaseURL.isEmpty {
+                        CopyButton(title: "Copy Public", systemImage: "globe") {
+                            appState.endpointURL(for: connector, publicEndpoint: true)
+                        }
                     }
-                    .disabled(!isPublic || appState.publicBaseURL.isEmpty)
                 }
             }
 
@@ -1030,12 +1228,12 @@ private struct ConnectorRow: View {
                             Button {
                                 Task { await appState.save() }
                             } label: {
-                                Label("Save Environment", systemImage: "checkmark.circle")
+                                Label("Apply Environment", systemImage: "checkmark.circle")
                             }
                         }
                     }
                 } label: {
-                    Text("Required Environment (\(requiredVars.count))")
+                    Label("Required Environment (\(requiredVars.count))", systemImage: "key")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -1070,11 +1268,7 @@ private struct SourcePathRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
 
-            Text(path)
-                .font(.system(.caption, design: .monospaced))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
+            PathText(path: path)
 
             Spacer()
 
@@ -1093,18 +1287,19 @@ private struct SourcePathRow: View {
     }
 }
 
-private struct StatusDot: View {
+private struct ActivityIndicator: View {
     let isActive: Bool
 
     var body: some View {
-        Circle()
-            .fill(isActive ? Color.green : Color.secondary.opacity(0.35))
-            .frame(width: 9, height: 9)
-            .accessibilityLabel(isActive ? "Active" : "Idle")
+        Image(systemName: isActive ? "dot.radiowaves.left.and.right" : "circle")
+            .foregroundStyle(isActive ? .green : .secondary)
+            .frame(width: 18)
+            .help(isActive ? "Active session" : "No active sessions")
+            .accessibilityLabel(isActive ? "Active session" : "No active sessions")
     }
 }
 
-private struct StatusPill: View {
+private struct StatusLine: View {
     let text: String
     let systemImage: String
 
@@ -1112,9 +1307,6 @@ private struct StatusPill: View {
         Label(text, systemImage: systemImage)
             .font(.caption)
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.quaternary.opacity(0.35), in: Capsule())
     }
 }
 
@@ -1130,11 +1322,7 @@ private struct CloudConnectorRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(connector.name)
                         .font(.headline)
-                    Text(appState.endpointURL(for: connector, publicEndpoint: true))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
+                    MonospacedValueText(value: appState.endpointURL(for: connector, publicEndpoint: true))
                 }
                 Spacer()
             }

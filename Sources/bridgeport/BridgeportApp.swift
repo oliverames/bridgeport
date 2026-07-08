@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, Sendable {
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run as an accessory app (menu bar only, no Dock icon)
+        NSWindow.allowsAutomaticWindowTabbing = false
         NSApp.setActivationPolicy(.accessory)
         DispatchQueue.main.async {
             SettingsWindowCoordinator.shared.installAppMenuItem()
@@ -29,17 +30,23 @@ struct BridgeportApp: App {
                 .font(.headline)
 
             let totalCount = appState.discoveredConnectors.count
-            Text(menuSummary(totalCount: totalCount))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Label {
+                Text(menuSummary(totalCount: totalCount))
+            } icon: {
+                Image(systemName: appState.isDaemonRunning ? "checkmark.circle.fill" : "stop.circle")
+                    .foregroundStyle(appState.isDaemonRunning ? .green : .secondary)
+            }
 
-            Text("Cloudflare: \(appState.cloudflareStatusText)")
-                .font(.caption)
-                .foregroundStyle(appState.cloudflareStatus.state == .running ? .green : .secondary)
+            Label {
+                Text("Cloudflare: \(appState.cloudflareStatusText)")
+            } icon: {
+                Image(systemName: cloudflareStatusIcon)
+                    .foregroundStyle(cloudflareStatusTint)
+            }
 
             Divider()
 
-            Button("Open Settings") {
+            Button("Settings…") {
                 openSettingsWindow()
             }
             .keyboardShortcut(",", modifiers: .command)
@@ -74,28 +81,6 @@ struct BridgeportApp: App {
 
             Divider()
 
-            if appState.discoveredConnectors.isEmpty {
-                Button("Configure Sources") {
-                    openSettingsWindow()
-                }
-            } else {
-                ForEach(appState.discoveredConnectors, id: \.name) { connector in
-                    let activeCount = appState.activeSessions(for: connector)
-                    Toggle(isOn: Binding(
-                        get: { appState.connectorSettings(for: connector.name).enabled },
-                        set: { _ in
-                            Task {
-                                await appState.toggleConnector(connector.name)
-                            }
-                        }
-                    )) {
-                        Text(connectorMenuTitle(connector.name, activeCount: activeCount))
-                    }
-                }
-            }
-
-            Divider()
-
             Button("Quit Bridgeport") {
                 NSApplication.shared.terminate(nil)
             }
@@ -112,6 +97,16 @@ struct BridgeportApp: App {
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
+
+            CommandGroup(replacing: .help) {
+                Button("Bridgeport Help") {
+                    openDocumentation()
+                }
+
+                Button("Report Bridgeport Issue") {
+                    openIssueReporter()
+                }
+            }
         }
     }
 
@@ -124,22 +119,6 @@ struct BridgeportApp: App {
         return "\(daemon) - \(appState.enabledConnectorCount)/\(totalCount) enabled - \(appState.activeSessionCount) active"
     }
 
-    private func connectorMenuTitle(_ name: String, activeCount: Int) -> String {
-        let suffix = activeCount > 0 ? " (\(activeCount))" : ""
-        return shortMenuTitle(name, suffix: suffix)
-    }
-
-    private func shortMenuTitle(_ value: String, suffix: String = "") -> String {
-        let maxLength = max(1, 30 - suffix.count)
-        if value.count <= maxLength {
-            return value + suffix
-        }
-        guard maxLength > 1 else {
-            return String(value.prefix(maxLength)) + suffix
-        }
-        return String(value.prefix(maxLength - 1)) + "…" + suffix
-    }
-
     private var menuBarSymbol: String {
         let preferred = appState.isDaemonRunning
             ? "app.connected.to.app.below.fill"
@@ -149,5 +128,37 @@ struct BridgeportApp: App {
             : "bolt"
 
         return NSImage(systemSymbolName: preferred, accessibilityDescription: nil) == nil ? fallback : preferred
+    }
+
+    private var cloudflareStatusTint: Color {
+        switch appState.cloudflareStatus.state {
+        case .running: .green
+        case .error, .missingCloudflared: .red
+        case .needsTunnel, .needsConfig: .orange
+        case .disabled, .stopped: .secondary
+        }
+    }
+
+    private var cloudflareStatusIcon: String {
+        switch appState.cloudflareStatus.state {
+        case .running: "checkmark.circle.fill"
+        case .error: "exclamationmark.triangle.fill"
+        case .missingCloudflared: "questionmark.circle"
+        case .needsTunnel, .needsConfig: "wrench.and.screwdriver"
+        case .stopped: "stop.circle"
+        case .disabled: "pause.circle"
+        }
+    }
+
+    private func openDocumentation() {
+        if let url = URL(string: "https://github.com/oliverames/bridgeport#readme") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func openIssueReporter() {
+        if let url = URL(string: "https://github.com/oliverames/bridgeport/issues") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }

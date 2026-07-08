@@ -6,6 +6,8 @@ APP_NAME="Bridgeport"
 BINARY_NAME="bridgeport"
 BUNDLE_ID="com.oliverames.bridgeport"
 MIN_SYSTEM_VERSION="26.0"
+VERSION="${BRIDGEPORT_VERSION:-1.0.5}"
+BUILD="${BRIDGEPORT_BUILD:-dev}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
@@ -53,10 +55,16 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>$BUILD</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright 2026 Oliver Ames. All rights reserved.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

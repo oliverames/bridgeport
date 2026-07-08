@@ -95,12 +95,14 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
             defer: false
         )
         window.title = "Bridgeport Settings"
+        window.subtitle = "Settings"
         window.identifier = NSUserInterfaceItemIdentifier("BridgeportSettingsWindow")
         window.contentViewController = hostingController
         window.minSize = NSSize(width: 860, height: 560)
         window.isReleasedWhenClosed = false
         window.delegate = nil
         window.toolbarStyle = .unified
+        window.tabbingMode = .disallowed
         window.titlebarAppearsTransparent = false
         window.center()
 
