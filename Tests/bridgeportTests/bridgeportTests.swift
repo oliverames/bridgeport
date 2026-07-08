@@ -12,6 +12,32 @@ import Darwin
     #expect(ConfigManager.normalizedRoutePath("../bad path?token=x") == "bad-path-token-x")
 }
 
+@Test func blankConnectorRouteOverridesUseConnectorName() {
+    let connector = Connector(
+        name: "ynab",
+        directoryPath: "/tmp/ynab",
+        configPath: "/tmp/ynab/.mcp.json",
+        command: "node",
+        args: [],
+        env: [:],
+        importedFrom: "/tmp/ynab",
+        sourceKind: .imported
+    )
+    let nilOverride = BridgeportConfig(
+        connectorSettings: [
+            "ynab": BridgeportConnectorSettings(publicPath: nil)
+        ]
+    )
+    let blankOverride = BridgeportConfig(
+        connectorSettings: [
+            "ynab": BridgeportConnectorSettings(publicPath: "  ")
+        ]
+    )
+
+    #expect(nilOverride.publicRoutePath(for: connector) == "ynab")
+    #expect(blankOverride.publicRoutePath(for: connector) == "ynab")
+}
+
 @Test func dotenvParserHandlesMountedOnePasswordFileShape() {
     let values = ConnectorManager.parseDotenv("""
     # 1Password mounted env

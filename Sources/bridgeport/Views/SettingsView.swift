@@ -1130,7 +1130,7 @@ private struct ConnectorRow: View {
         let settings = appState.connectorSettings(for: connector.name)
         let activeCount = appState.activeSessions(for: connector)
         let isPublic = settings.exposePublicly
-        let routePath = ConfigManager.normalizedRoutePath(settings.publicPath ?? connector.name)
+        let routePath = effectiveRoutePath(settings: settings)
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
@@ -1255,6 +1255,12 @@ private struct ConnectorRow: View {
     private func isSensitiveKey(_ name: String) -> Bool {
         let lower = name.lowercased()
         return lower.contains("token") || lower.contains("key") || lower.contains("secret") || lower.contains("password")
+    }
+
+    private func effectiveRoutePath(settings: BridgeportConnectorSettings) -> String {
+        let configuredPath = settings.publicPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let routeSource = configuredPath.flatMap { $0.isEmpty ? nil : $0 } ?? connector.name
+        return ConfigManager.normalizedRoutePath(routeSource)
     }
 }
 

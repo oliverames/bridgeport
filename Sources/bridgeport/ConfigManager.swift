@@ -275,8 +275,9 @@ public struct BridgeportConfig: Codable, Sendable {
     }
 
     public func publicRoutePath(for connector: Connector) -> String {
-        let configuredPath = settings(for: connector.name).publicPath ?? connector.name
-        return ConfigManager.normalizedRoutePath(configuredPath)
+        let configuredPath = settings(for: connector.name).publicPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let routeSource = configuredPath.flatMap { $0.isEmpty ? nil : $0 } ?? connector.name
+        return ConfigManager.normalizedRoutePath(routeSource)
     }
 }
 
