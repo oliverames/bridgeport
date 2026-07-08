@@ -1549,6 +1549,7 @@ public actor SSEServer {
 
     private static let sessionHeader = HTTPHeader("Mcp-Session-Id")
     private static let originHeader = HTTPHeader("Origin")
+    private static let maxSessions = 64
     private static let maxRequestBodyBytes = 1_048_576
     private static let sessionIdleTimeout: TimeInterval = 600
 }
