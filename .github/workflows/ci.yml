@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, test, and verify installation
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Run Swift tests
+        run: swift test
+
+      - name: Run isolated HTTP smoke tests
+        run: python3 test_client.py
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Assemble app bundle
+        run: script/build_and_run.sh --build-only
+
+      - name: Verify clean installation
+        run: script/verify_clean_install.sh dist/Bridgeport.app
+
+  secrets:
+    name: Scan full history for secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -397,19 +397,19 @@ struct SettingsView: View {
                 Divider()
 
                 SettingsField(label: "Profile") {
-                    TextField("Oliver Ames private", text: $appState.cloudflare.profileName)
+                    TextField("Personal tunnel", text: $appState.cloudflare.profileName)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await appState.save(restartDaemon: false) } }
                 }
 
                 SettingsField(label: "Domain") {
-                    TextField("amesvt.com", text: $appState.cloudflare.domain)
+                    TextField("example.com", text: $appState.cloudflare.domain)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await appState.save(restartDaemon: false) } }
                 }
 
                 SettingsField(label: "Hostname") {
-                    TextField("mcp.amesvt.com", text: $appState.cloudflare.hostname)
+                    TextField("mcp.example.com", text: $appState.cloudflare.hostname)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit {
                             appState.publicBaseURL = CloudflareManager.publicBaseURL(for: appState.cloudflare)

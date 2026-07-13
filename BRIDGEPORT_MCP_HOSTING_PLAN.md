@@ -2,7 +2,7 @@
 
 ## Product Position
 
-Bridgeport is a personal MCP gateway for Mac-local and self-hosted-only connectors. The release-candidate scope is focused on Oliver's own always-on Mac and private domains, but the app is structured as if it could be cleaned up for public release later.
+Bridgeport is a personal MCP gateway for Mac-local and self-hosted-only connectors. The release scope supports a user's always-on Mac and private domain without seeding maintainer-specific paths or deployment values.
 
 Bridgeport's primary provider-facing surface is not a generic webhook. Provider setup should be described as authenticated remote MCP over Streamable HTTP, with legacy SSE support where a provider still needs it. The webhook route remains a connector-specific compatibility endpoint for integrations that send inbound events.
 
@@ -49,7 +49,7 @@ Bridgeport should not host:
 - Anthropic Messages API MCP server definitions using `authorization_token`.
 - Mistral Work custom connector details using HTTP Bearer Token auth.
 - Vibe Code CLI TOML snippets using `streamable-http` plus `Authorization` headers.
-- Bridgeport-owned Cloudflare settings with safe non-secret defaults for Oliver's private `amesvt.com` route and editable bring-your-own-Cloudflare fields.
+- Bridgeport-owned Cloudflare settings with blank identity fields and editable bring-your-own-Cloudflare values.
 - Bridgeport-managed named Cloudflare Tunnel lifecycle through `cloudflared`, including local config generation, LaunchAgent installation, status, create or repair, start, stop, and restart controls.
 - 1Password support through:
   - Mounted 1Password Environment `.env` file.
@@ -64,19 +64,18 @@ Primary file: `~/.config/bridgeport/config.json`.
 {
   "token": "ames_...",
   "port": 8080,
-  "publicBaseURL": "https://mcp.amesvt.com",
+  "publicBaseURL": "https://mcp.example.com",
   "bindHost": "127.0.0.1",
   "allowedOrigins": [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
-    "https://mcp.amesvt.com"
+    "https://mcp.example.com"
   ],
   "allowQueryTokenAuth": false,
-  "connectorsPath": "/Users/oliverames/Developer/Projects/ames-connectors/plugins",
+  "connectorsPath": "/Users/example/.config/bridgeport/connectors",
   "additionalConnectorPaths": [
-    "/Users/oliverames/Developer/Projects/ynab-mcp-server",
-    "/Users/oliverames/.claude/settings.json",
-    "/Users/oliverames/.codex/config.toml"
+    "/Users/example/.claude/settings.json",
+    "/Users/example/.codex/config.toml"
   ],
   "importedConnectors": {},
   "connectorSettings": {
@@ -100,11 +99,11 @@ Primary file: `~/.config/bridgeport/config.json`.
   },
   "cloudflare": {
     "enabled": false,
-    "profileName": "Oliver Ames private",
+    "profileName": "Personal tunnel",
     "accountId": "",
     "zoneId": "",
-    "domain": "amesvt.com",
-    "hostname": "mcp.amesvt.com",
+    "domain": "example.com",
+    "hostname": "mcp.example.com",
     "tunnelName": "bridgeport",
     "tunnelId": "",
     "credentialsFilePath": "",
@@ -129,7 +128,7 @@ Generated file: `~/.config/bridgeport/mcp_config.json`.
   "mcpServers": {
     "ynab-mcp-server": {
       "type": "http",
-      "url": "https://mcp.amesvt.com/mcp/ynab",
+      "url": "https://mcp.example.com/mcp/ynab",
       "headers": {
         "Authorization": "Bearer ames_..."
       }
@@ -145,7 +144,7 @@ Generated file: `~/.config/bridgeport/cloud_connectors.json`.
   "claudeCustomConnectors": [
     {
       "name": "YNAB (BridgePort)",
-      "remoteMCPServerURL": "https://mcp.amesvt.com/mcp/ynab",
+      "remoteMCPServerURL": "https://mcp.example.com/mcp/ynab",
       "readyForClaudeApp": true
     }
   ],
@@ -153,19 +152,19 @@ Generated file: `~/.config/bridgeport/cloud_connectors.json`.
     {
       "type": "url",
       "name": "ynab-mcp-server",
-      "url": "https://mcp.amesvt.com/mcp/ynab",
+      "url": "https://mcp.example.com/mcp/ynab",
       "authorization_token": "ames_..."
     }
   ],
   "mistralCustomConnectors": [
     {
       "name": "ynab-mcp-server",
-      "serverURL": "https://mcp.amesvt.com/mcp/ynab",
+      "serverURL": "https://mcp.example.com/mcp/ynab",
       "authenticationMethod": "HTTP Bearer Token",
       "apiCreatePayload": {
         "title": "YNAB (BridgePort)",
         "name": "ynab_bridgeport",
-        "icon_url": "https://mcp.amesvt.com/icons/ynab?v=..."
+        "icon_url": "https://mcp.example.com/icons/ynab?v=..."
       }
     }
   ]
@@ -180,7 +179,7 @@ Recommended personal deployment:
 - Bridgeport owns a named Cloudflare Tunnel, by default named `bridgeport`.
 - Bridgeport writes `~/.config/bridgeport/cloudflared/config.yml`.
 - Bridgeport writes `~/Library/LaunchAgents/com.oliverames.bridgeport.cloudflared.plist` for the tunnel process.
-- `cloudflared` routes `mcp.amesvt.com` to `http://127.0.0.1:<port>`.
+- `cloudflared` routes `mcp.example.com` to `http://127.0.0.1:<port>`.
 - Bridgeport validates `Authorization: Bearer <token>`.
 - Bridgeport advertises `WWW-Authenticate: Bearer` for unauthenticated requests so remote connector platforms can detect Bearer auth.
 - Cloudflare Access and WAF rules can further restrict who can call the hostname and which paths/methods are allowed.
@@ -194,9 +193,9 @@ The route mode is intentionally `single-hostname-path-routing`: Cloudflare forwa
 
 Example endpoints:
 
-- `https://mcp.amesvt.com/mcp/ynab`
-- `https://mcp.amesvt.com/ynab-mcp-server/webhook`
-- `https://mcp.amesvt.com/status`
+- `https://mcp.example.com/mcp/ynab`
+- `https://mcp.example.com/ynab-mcp-server/webhook`
+- `https://mcp.example.com/status`
 
 ## Security Posture
 

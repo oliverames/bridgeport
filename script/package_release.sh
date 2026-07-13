@@ -16,7 +16,13 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$BINARY_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 DMG_PATH="$RELEASE_DIR/$APP_NAME-$VERSION.dmg"
+DMG_STAGING_DIR="$RELEASE_DIR/.dmg-staging"
 APP_ICON="$ROOT_DIR/Resources/AppIcon.icns"
+
+cleanup() {
+  rm -rf "$DMG_STAGING_DIR"
+}
+trap cleanup EXIT
 
 find_signing_identity() {
   if [ -n "${BRIDGEPORT_SIGN_IDENTITY:-}" ]; then
@@ -35,7 +41,7 @@ if [ -z "$SIGN_IDENTITY" ]; then
   exit 1
 fi
 
-rm -rf "$APP_BUNDLE" "$DMG_PATH"
+rm -rf "$APP_BUNDLE" "$DMG_PATH" "$DMG_STAGING_DIR"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 
 swift build -c release
@@ -82,10 +88,14 @@ plutil -lint "$INFO_PLIST"
 codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
+mkdir -p "$DMG_STAGING_DIR"
+ditto "$APP_BUNDLE" "$DMG_STAGING_DIR/$APP_NAME.app"
+ln -s /Applications "$DMG_STAGING_DIR/Applications"
+
 diskutil image create from \
   --format UDZO \
   --volumeName "$APP_NAME $VERSION" \
-  "$APP_BUNDLE" \
+  "$DMG_STAGING_DIR" \
   "$DMG_PATH"
 
 codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"

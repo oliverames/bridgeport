@@ -1,0 +1,5 @@
+# Initial documentation used an obvious angle-bracket token placeholder. The
+# value does not match Bridgeport's generated token shape and was never a
+# credential. Keep this fingerprint-specific exception so all other history is
+# scanned normally.
+f2c3cef28262a241477c7d16e1df36a0fae491cf:CLOUDFLARE.md:generic-api-key:123

@@ -5,7 +5,7 @@ Local time during browser testing: 2026-07-07 evening America/New_York.
 ## Scope
 
 - Local Bridgeport status exposed 25 enabled MCP servers.
-- The generated cloud connector export exposed only `YNAB (BridgePort)` for Claude and Mistral, backed by `https://mcp.amesvt.com/mcp/ynab`.
+- The generated cloud connector export exposed only `YNAB (BridgePort)` for Claude and Mistral, backed by the private production hostname (redacted from the public-readiness tree).
 - All other local connectors were local-only in the active config and were not addable to Mistral or Claude from the current cloud export.
 - Test prompt used in Mistral and Claude: ask YNAB for unapproved transactions with `review_unapproved` and `summary: true`, then report only aggregate counts.
 - No tokens, OAuth codes, transaction IDs, payees, or amounts were logged.
@@ -15,7 +15,7 @@ Local time during browser testing: 2026-07-07 evening America/New_York.
 - `gui/501/com.oliverames.bridgeport`: running.
 - `gui/501/com.oliverames.bridgeport.cloudflared`: running.
 - Local YNAB MCP endpoint: `http://127.0.0.1:8085/mcp/ynab`.
-- Public YNAB MCP endpoint: `https://mcp.amesvt.com/mcp/ynab`.
+- Public YNAB MCP endpoint: private production hostname (redacted from the public-readiness tree).
 
 ## Verification Matrix
 

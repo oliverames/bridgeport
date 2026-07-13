@@ -85,11 +85,11 @@ public struct CloudflareSettings: Codable, Sendable, Equatable {
 
     public init(
         enabled: Bool = false,
-        profileName: String = "Oliver Ames private",
+        profileName: String = "Personal tunnel",
         accountId: String = "",
         zoneId: String = "",
-        domain: String = "amesvt.com",
-        hostname: String = "mcp.amesvt.com",
+        domain: String = "",
+        hostname: String = "",
         tunnelName: String = "bridgeport",
         tunnelId: String = "",
         credentialsFilePath: String = "",
@@ -916,17 +916,9 @@ public actor ConfigManager {
     }
 
     public static func defaultPrimaryConnectorsPath() -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let projects = home.appendingPathComponent("Developer/Projects")
-        let candidates = [
-            projects.appendingPathComponent("ames-plugins/plugins"),
-            projects.appendingPathComponent("ames-connectors/plugins")
-        ]
-
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
-            return candidate.path
-        }
-        return candidates[0].path
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/bridgeport/connectors")
+            .path
     }
 
     public static func defaultClaudeSettingsPath() -> String {
@@ -942,17 +934,10 @@ public actor ConfigManager {
     }
 
     public static func defaultAdditionalConnectorPaths(excluding primaryPath: String? = nil) -> [String] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let projects = home.appendingPathComponent("Developer/Projects")
         let primary = primaryPath.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath).standardizedFileURL.path }
         let candidates = [
-            projects.appendingPathComponent("ames-plugins/plugins"),
-            projects.appendingPathComponent("ames-connectors/plugins"),
-            projects.appendingPathComponent("ynab-mcp-server"),
             URL(fileURLWithPath: defaultClaudeSettingsPath()),
-            URL(fileURLWithPath: defaultCodexConfigPath()),
-            home.appendingPathComponent(".claude/plugins/cache/apple-notes-mcp/apple-notes/2.5.3"),
-            home.appendingPathComponent(".claude/plugins/cache/apple-notes-mcp-ames/apple-notes/1.4.3")
+            URL(fileURLWithPath: defaultCodexConfigPath())
         ]
 
         var paths: [String] = []
@@ -975,12 +960,10 @@ public actor ConfigManager {
     public static func normalizedCloudflareSettings(_ settings: CloudflareSettings) -> CloudflareSettings {
         var normalized = settings
         if normalized.profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            normalized.profileName = "Oliver Ames private"
+            normalized.profileName = "Personal tunnel"
         }
-        if normalized.domain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            normalized.domain = "amesvt.com"
-        }
-        if normalized.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if normalized.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !normalized.domain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             normalized.hostname = "mcp.\(normalized.domain)"
         }
         if normalized.tunnelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

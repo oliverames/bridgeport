@@ -1,6 +1,6 @@
 # Cloudflare Tunnel Guide
 
-This guide exposes a local Bridgeport daemon through Cloudflare Tunnel for private MCP access and webhook delivery under an `amesvt.com` hostname.
+This guide exposes a local Bridgeport daemon through Cloudflare Tunnel for private MCP access and webhook delivery under a user-owned hostname.
 
 Bridgeport should keep listening on localhost. Cloudflare handles public TLS and forwards only the selected hostname to the Mac.
 
@@ -36,11 +36,11 @@ Use these values in Bridgeport Settings:
 |---------|-------|
 | Bind Host | `127.0.0.1` |
 | Cloudflare enabled | On when public connector exposure is needed |
-| Profile | `Oliver Ames private` or a user-supplied Cloudflare profile |
-| Domain | `amesvt.com` or the user's Cloudflare zone |
-| Hostname | `mcp.amesvt.com` or the selected hostname |
+| Profile | `Personal tunnel` or another descriptive local name |
+| Domain | `example.com`, replaced with the user's Cloudflare zone |
+| Hostname | `mcp.example.com`, replaced with the selected hostname |
 | Tunnel name | `bridgeport` by default |
-| Public Base URL | `https://mcp.amesvt.com`, derived from the hostname |
+| Public Base URL | `https://mcp.example.com`, derived from the hostname |
 | Allowed Origins | Localhost origins plus the public hostname origin |
 | Query-string token fallback | Off, unless a legacy client cannot send headers |
 
@@ -81,13 +81,13 @@ Bridgeport writes the managed tunnel config to `~/.config/bridgeport/cloudflared
 
 ```yaml
 tunnel: <TUNNEL_UUID>
-credentials-file: /Users/oliverames/.cloudflared/<TUNNEL_UUID>.json
+credentials-file: /Users/example/.cloudflared/<TUNNEL_UUID>.json
 loglevel: warn
 transport-loglevel: warn
 metrics: localhost:0
 
 ingress:
-  - hostname: mcp.amesvt.com
+  - hostname: mcp.example.com
     service: http://127.0.0.1:8080
   - service: http_status:404
 ```
@@ -115,7 +115,7 @@ Bridgeport generates these in `~/.config/bridgeport/mcp_config.json` for public 
   "mcpServers": {
     "ynab-mcp-server": {
       "type": "http",
-      "url": "https://mcp.amesvt.com/mcp/ynab",
+      "url": "https://mcp.example.com/mcp/ynab",
       "headers": {
         "Authorization": "Bearer ames_..."
       }
@@ -127,7 +127,7 @@ Bridgeport generates these in `~/.config/bridgeport/mcp_config.json` for public 
 Webhook endpoints use the same bearer-token header:
 
 ```http
-POST https://mcp.amesvt.com/ynab-mcp-server/webhook
+POST https://mcp.example.com/ynab-mcp-server/webhook
 Authorization: Bearer ames_...
 Content-Type: application/json
 ```
@@ -147,7 +147,7 @@ Claude, ChatGPT, and Mistral custom connectors connect from cloud infrastructure
 Mistral Work/Vibe custom connectors and Vibe Code can use the public URL with Bearer auth:
 
 ```text
-Server URL: https://mcp.amesvt.com/mcp/ynab
+Server URL: https://mcp.example.com/mcp/ynab
 Authorization: Bearer ames_...
 ```
 
@@ -182,5 +182,5 @@ curl -i \
 ```bash
 curl -i \
   -H "Authorization: Bearer <token>" \
-  https://mcp.amesvt.com/status
+  https://mcp.example.com/status
 ```

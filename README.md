@@ -12,6 +12,8 @@ Bridgeport is a macOS 26 Tahoe menu bar utility and LaunchAgent daemon that turn
 
 Bridgeport is intended for connectors that need this Mac, local app data, local credentials, or inexpensive personal hosting. URL-only MCP servers are skipped because they already have hosted equivalents.
 
+> **Release status:** Source builds and a signed, notarized DMG are available from the GitHub releases. See [Releasing Bridgeport](RELEASING.md) for verification and release details.
+
 ## What It Does
 
 ```mermaid
@@ -100,27 +102,35 @@ Build and launch the `.app` bundle:
 script/build_and_run.sh --verify
 ```
 
+To assemble the app without launching it and exercise a fresh isolated installation:
+
+```bash
+script/build_and_run.sh --build-only
+script/verify_clean_install.sh dist/Bridgeport.app
+```
+
 ## Configuration
 
 Bridgeport stores its config at `~/.config/bridgeport/config.json`.
+
+Fresh installs use `~/.config/bridgeport/connectors` as the neutral primary source and leave Cloudflare identity fields blank. The expanded example below shows a user-configured public hostname.
 
 ```json
 {
   "token": "ames_...",
   "port": 8080,
-  "publicBaseURL": "https://mcp.amesvt.com",
+  "publicBaseURL": "https://mcp.example.com",
   "bindHost": "127.0.0.1",
   "allowedOrigins": [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
-    "https://mcp.amesvt.com"
+    "https://mcp.example.com"
   ],
   "allowQueryTokenAuth": false,
-  "connectorsPath": "/Users/oliverames/Developer/Projects/ames-connectors/plugins",
+  "connectorsPath": "/Users/example/.config/bridgeport/connectors",
   "additionalConnectorPaths": [
-    "/Users/oliverames/Developer/Projects/ynab-mcp-server",
-    "/Users/oliverames/.claude/settings.json",
-    "/Users/oliverames/.codex/config.toml"
+    "/Users/example/.claude/settings.json",
+    "/Users/example/.codex/config.toml"
   ],
   "connectorSettings": {
     "ynab-mcp-server": {
@@ -142,11 +152,11 @@ Bridgeport stores its config at `~/.config/bridgeport/config.json`.
   },
   "cloudflare": {
     "enabled": true,
-    "profileName": "Oliver Ames private",
+    "profileName": "Personal tunnel",
     "accountId": "",
     "zoneId": "",
-    "domain": "amesvt.com",
-    "hostname": "mcp.amesvt.com",
+    "domain": "example.com",
+    "hostname": "mcp.example.com",
     "tunnelName": "bridgeport",
     "tunnelId": "",
     "credentialsFilePath": "",
@@ -175,7 +185,7 @@ Bridgeport writes enabled connectors to `~/.config/bridgeport/mcp_config.json`.
   "mcpServers": {
     "ynab-mcp-server": {
       "type": "http",
-      "url": "https://mcp.amesvt.com/mcp/ynab",
+      "url": "https://mcp.example.com/mcp/ynab",
       "headers": {
         "Authorization": "Bearer ames_..."
       }
@@ -192,7 +202,7 @@ Bridgeport writes public connector exports to `~/.config/bridgeport/cloud_connec
 
 ChatGPT custom apps, Claude custom connectors, and Mistral custom connectors are reached from cloud infrastructure, not from this Mac. Set `publicBaseURL` to a Cloudflare Tunnel hostname, keep `allowQueryTokenAuth` off, and expose only the connectors you intend to make public.
 
-Oliver's current private deployment exposes `ynab-mcp-server` at `https://mcp.amesvt.com/mcp/ynab`. Apple Notes is discovered and available locally, but it is not exposed publicly unless the Public toggle is deliberately enabled.
+For example, a user can expose `ynab-mcp-server` at `https://mcp.example.com/mcp/ynab` while keeping Apple Notes local. A discovered connector is not exposed publicly unless its **Public** toggle is deliberately enabled.
 
 Claude custom connectors use Bridgeport's built-in OAuth 2.1 authorization-code flow with PKCE and dynamic client registration. The remote MCP URL is the normal endpoint, for example `https://mcp.example.com/mcp/ynab`; Claude discovers Bridgeport's authorization and token endpoints from the protected-resource metadata advertised on 401 responses. The Bridgeport approval page requires the Bridgeport token before it issues an OAuth authorization code, so keep the public hostname behind Cloudflare Access or equivalent policy and treat that token as a secret. Failed approval attempts are delayed to slow online guessing, and token endpoint responses are marked `Cache-Control: no-store` per RFC 6749.
 
@@ -204,7 +214,7 @@ Anthropic Messages API MCP connector definitions use `authorization_token`, so t
 {
   "type": "url",
   "name": "ynab-mcp-server",
-  "url": "https://mcp.amesvt.com/mcp/ynab",
+  "url": "https://mcp.example.com/mcp/ynab",
   "authorization_token": "ames_..."
 }
 ```
@@ -213,7 +223,7 @@ Mistral Work/Vibe custom connectors can use the same public MCP URL and select o
 
 ```text
 Name: YNAB (BridgePort)
-Server URL: https://mcp.amesvt.com/mcp/ynab
+Server URL: https://mcp.example.com/mcp/ynab
 Authentication: HTTP Bearer Token
 Authorization header: Bearer ames_...
 ```
@@ -226,7 +236,7 @@ Vibe Code CLI can use the generated TOML:
 [[mcp_servers]]
 name = "ynab-mcp-server"
 transport = "streamable-http"
-url = "https://mcp.amesvt.com/mcp/ynab"
+url = "https://mcp.example.com/mcp/ynab"
 headers = { "Authorization" = "Bearer ames_..." }
 ```
 
@@ -250,11 +260,10 @@ Use **Import MCPs** when you want Bridgeport to copy connector definitions into 
 
 Use **Mirror MCPs From...** when you want Bridgeport to keep reading an external source live. Good mirror sources include:
 
-- `/Users/oliverames/Developer/Projects/ames-connectors/plugins`
-- `/Users/oliverames/Developer/Projects/ynab-mcp-server`
-- `/Users/oliverames/.claude/settings.json`
-- `/Users/oliverames/.codex/config.toml`
-- `/Users/oliverames/.claude/plugins/cache/apple-notes-mcp/apple-notes/<version>`
+- `/Users/example/Developer/Projects/local-mcp-servers`
+- `/Users/example/.claude/settings.json`
+- `/Users/example/.codex/config.toml`
+- `/Users/example/.claude/plugins/cache/example-plugin/example-mcp/<version>`
 
 The Sources settings pane also has one-click actions for the default Claude Code and Codex config paths. Both flows keep URL-only web MCPs out of Bridgeport and default newly discovered local MCPs to private, non-public exposure.
 
@@ -340,11 +349,11 @@ OAuth dynamic client registrations and issued access tokens are persisted privat
 
 ## Cloudflare
 
-Bridgeport owns the local Cloudflare Tunnel lifecycle. The Cloudflare settings pane stores non-secret account metadata, a hostname such as `mcp.amesvt.com`, the named tunnel, the local `cloudflared` path, and Bridgeport's generated `cloudflared` config path. Secrets stay outside the app bundle and repository: use `cloudflared tunnel login`, a local credentials file, a tunnel token, environment variables, or `op://` references.
+Bridgeport owns the local Cloudflare Tunnel lifecycle. The Cloudflare settings pane stores non-secret account metadata, a hostname such as `mcp.example.com`, the named tunnel, the local `cloudflared` path, and Bridgeport's generated `cloudflared` config path. Secrets stay outside the app bundle and repository: use `cloudflared tunnel login`, a local credentials file, a tunnel token, environment variables, or `op://` references.
 
 The production shape is a named tunnel with one hostname and Bridgeport path routing:
 
-- `cloudflared` forwards `https://mcp.amesvt.com` to `http://127.0.0.1:<port>`.
+- `cloudflared` forwards `https://mcp.example.com` to `http://127.0.0.1:<port>`.
 - Bridgeport serves `/mcp/<connector>` only when that connector is enabled.
 - Public-host requests for private or disabled connectors return unavailable rather than reaching the local MCP process.
 - Generated connector URLs and Mistral `icon_url` values use Bridgeport metadata, not Cloudflare branding.
@@ -393,8 +402,8 @@ swift build
 swift test
 python3 test_client.py
 script/build_and_run.sh --verify
-script/package_release.sh 1.0.5
-script/notarize_release.sh dist/release/Bridgeport-1.0.5.dmg
+script/build_and_run.sh --build-only
+script/verify_clean_install.sh dist/Bridgeport.app
 ```
 
 `test_client.py` uses an isolated `BRIDGEPORT_CONFIG_HOME` and a free local port so it can run alongside an installed Bridgeport daemon.
@@ -403,7 +412,14 @@ script/notarize_release.sh dist/release/Bridgeport-1.0.5.dmg
 
 `script/notarize_release.sh` retrieves the App Store Connect `.p8` from 1Password, submits the DMG with `notarytool`, staples the ticket, and runs `spctl` verification.
 
-GitHub releases are published by `.github/workflows/release.yml`: push an annotated `v<version>` tag, or dispatch the Release workflow with a `version` input to create the tag at the dispatched commit. Release notes are read from `docs/release-notes/v<version>.md` when that file exists. Attach the notarized DMG to the release afterwards.
+CI and release publication are separate workflows. CI runs tests, a release build, the clean-install probe, and full-history secret scanning. The Release workflow calls that CI gate before it publishes. See [RELEASING.md](RELEASING.md) for signing, notarization, artifact verification, tagging, and upload instructions.
+
+## Project Policies
+
+- [Privacy](PRIVACY.md)
+- [Security policy](SECURITY.md)
+- [Threat model](docs/THREAT_MODEL.md)
+- [Release process](RELEASING.md)
 
 ## License
 

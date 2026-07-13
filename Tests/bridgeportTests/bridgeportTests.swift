@@ -929,12 +929,14 @@ import Darwin
     #expect(plist["StandardErrorPath"] as? String == "/tmp/bridgeport & release/stderr.log")
 }
 
-@Test func defaultCloudflareSettingsPreloadSafePrivateProfileWithoutSecrets() {
+@Test func newInstallDefaultsDoNotContainMaintainerSpecificPathsOrCloudflareValues() {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
     let settings = ConfigManager.defaultCloudflareSettings()
 
-    #expect(settings.profileName == "Oliver Ames private")
-    #expect(settings.domain == "amesvt.com")
-    #expect(settings.hostname == "mcp.amesvt.com")
+    #expect(ConfigManager.defaultPrimaryConnectorsPath() == "\(home)/.config/bridgeport/connectors")
+    #expect(settings.profileName == "Personal tunnel")
+    #expect(settings.domain.isEmpty)
+    #expect(settings.hostname.isEmpty)
     #expect(settings.tunnelName == "bridgeport")
     #expect(settings.apiTokenEnvVar == "CLOUDFLARE_API_TOKEN")
     #expect(settings.apiTokenOPReference.isEmpty)
@@ -955,11 +957,23 @@ import Darwin
     #expect(settings.cloudflaredPath == "\(home)/bin/cloudflared")
 }
 
+@Test func cloudflareNormalizationPreservesExplicitUserIdentity() {
+    let settings = ConfigManager.normalizedCloudflareSettings(CloudflareSettings(
+        profileName: "Existing deployment",
+        domain: "gateway.example.org",
+        hostname: "mcp.gateway.example.org"
+    ))
+
+    #expect(settings.profileName == "Existing deployment")
+    #expect(settings.domain == "gateway.example.org")
+    #expect(settings.hostname == "mcp.gateway.example.org")
+}
+
 @Test func cloudflaredConfigYAMLUsesNamedTunnelAndLocalhostIngress() {
     let yaml = CloudflareManager.cloudflaredConfigYAML(
         settings: CloudflareSettings(
             enabled: true,
-            hostname: "mcp.amesvt.com",
+            hostname: "mcp.example.com",
             tunnelName: "bridgeport",
             tunnelId: "11111111-2222-3333-4444-555555555555",
             credentialsFilePath: "/Users/example/.cloudflared/bridgeport.json"
@@ -970,7 +984,7 @@ import Darwin
 
     #expect(yaml.contains(#"tunnel: "11111111-2222-3333-4444-555555555555""#))
     #expect(yaml.contains(#"credentials-file: "/Users/example/.cloudflared/bridgeport.json""#))
-    #expect(yaml.contains(#"hostname: "mcp.amesvt.com""#))
+    #expect(yaml.contains(#"hostname: "mcp.example.com""#))
     #expect(yaml.contains(#"service: "http://127.0.0.1:8080""#))
     #expect(yaml.contains("service: http_status:404"))
     #expect(!yaml.lowercased().contains("token"))
@@ -1010,7 +1024,7 @@ import Darwin
 
     #expect(status.state == CloudflareTunnelState.missingCloudflared)
     #expect(status.cloudflaredInstalled == false)
-    #expect(status.hostname == "mcp.amesvt.com")
+    #expect(status.hostname.isEmpty)
 }
 
 @Test func nonInitializeMessagesSkipIconDecoration() {

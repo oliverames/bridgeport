@@ -50,6 +50,8 @@ op document get "$APP_STORE_CONNECT_KEY_ITEM" \
 
 chmod 600 "$TMP_KEY"
 
+# The variables intentionally expand inside the op-run child shell.
+# shellcheck disable=SC2016
 op run --env-file="$TMP_ENV" -- sh -c \
   'xcrun notarytool submit "$1" --key "$2" --key-id "$APP_STORE_CONNECT_API_KEY" --issuer "$APP_STORE_CONNECT_ISSUER_ID" --wait' \
   sh "$DMG_PATH" "$TMP_KEY"

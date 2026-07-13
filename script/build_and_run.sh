@@ -6,7 +6,7 @@ APP_NAME="Bridgeport"
 BINARY_NAME="bridgeport"
 BUNDLE_ID="com.oliverames.bridgeport"
 MIN_SYSTEM_VERSION="26.0"
-VERSION="${BRIDGEPORT_VERSION:-1.0.5}"
+VERSION="${BRIDGEPORT_VERSION:-1.0.6}"
 BUILD="${BRIDGEPORT_BUILD:-dev}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,6 +18,15 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$BINARY_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 APP_ICON="$ROOT_DIR/Resources/AppIcon.icns"
+
+case "$MODE" in
+  run|--build-only|build-only|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify)
+    ;;
+  *)
+    echo "usage: $0 [run|--build-only|--debug|--logs|--telemetry|--verify]" >&2
+    exit 2
+    ;;
+esac
 
 # Stop only the app bundle assembled by this script. Do not stop an installed
 # LaunchAgent daemon that may be serving real connector sessions.
@@ -77,6 +86,9 @@ open_app() {
 }
 
 case "$MODE" in
+  --build-only|build-only)
+    echo "$APP_BUNDLE"
+    ;;
   run)
     open_app
     ;;
@@ -95,9 +107,5 @@ case "$MODE" in
     open_app
     sleep 1
     pgrep -f "$APP_BINARY" >/dev/null
-    ;;
-  *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
-    exit 2
     ;;
 esac
