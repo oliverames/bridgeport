@@ -1,3 +1,11 @@
+## 2026-07-13 - Current release gates
+
+**Current state**: Bridgeport 1.0.6 is published as a normal GitHub release. The DMG is Developer ID signed, notarized, stapled, and accepted by Gatekeeper. The release workflow and local verification are complete, so signing and packaging are no longer release blockers.
+
+**What remains**: The private repository makes the release available only to people who already have access. Before offering a public download, either select a source license and make the repository public, or use a separate public binary-distribution channel. If the source repository becomes public, first decide whether to rewrite the older maintainer paths and private deployment hostname or start from a clean public history. A Mac App Store version would be a separate product effort because the current helper, LaunchAgent, file access, and command-line integrations do not fit the sandboxed store build.
+
+---
+
 ## 2026-07-13 - Bridgeport 1.0.6 public-readiness hardening
 
 **What changed**: Replaced maintainer-specific new-install paths and Cloudflare identity defaults with neutral user-owned locations and blank identity fields while preserving explicit existing configuration. Redacted private deployment examples from the current documentation tree. Added CI, a release gate, full-history Gitleaks scanning, a clean-install verifier, corrected DMG staging, release documentation, privacy and security policies, and a threat model.
