@@ -1,3 +1,15 @@
+## 2026-07-18 - Discover enabled external plugins from the marketplace external_plugins dir
+
+**What changed**: `ConnectorManager.candidatePluginLocations` now also searches `~/.claude/plugins/marketplaces/<marketplace>/external_plugins/<plugin>`. Previously it looked only in the plugin cache and `~/Developer/Projects`, so a plugin the marketplace vendors from a third party (for example `imessage@claude-plugins-official`) was undiscoverable through `enabledPlugins` even when enabled in Claude Code. This resolves the follow-up noted in the prior "Wired iMessage" entry.
+
+**Decisions made**: Kept the fix to the one function and the single missing search location rather than adding a home-directory injection seam. `candidatePluginLocations` reads the real home directory, which is exactly why it has no unit test today: any test would depend on plugins actually installed on the machine and would not be hermetic in CI. Adding an injection seam would be a larger refactor than the fix warrants, so it is left as a possible future improvement. The explicit `additionalConnectorPaths` entry for iMessage stays in the live config because iMessage is not enabled in Claude Code; if it is ever enabled, the connector resolves through both paths and name-dedup prevents double registration.
+
+**Verification**: `swift build -c release` and `swift test` (44 tests) both passed. Live isolation test: ran the built binary with `BRIDGEPORT_CONFIG_HOME` pointed at a throwaway config whose `additionalConnectorPaths` contained only a synthetic `.claude/settings.json` enabling `imessage@claude-plugins-official`, with no direct plugin path. Discovery found `imessage` at the real `.../external_plugins/imessage` and wrote it to the isolated `mcp_config.json`, proving resolution went through the new branch. Before the change the same setup discovers zero connectors. Fixture and processes cleaned up afterward.
+
+**Left off at**: Source change committed. No release repackaging was done; this is a source-level fix and the change is covered by the existing test suite plus the live isolation check.
+
+---
+
 ## 2026-07-18 - Wired iMessage into the local vending set
 
 **What changed**: No source files changed. Added the iMessage MCP as a served local connector by pointing `additionalConnectorPaths` at its plugin directory, `~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/imessage`, so Bridgeport discovers it from the plugin's own `.mcp.json`. The connector is a stdio server (`command: bun`, `run --cwd ${CLAUDE_PLUGIN_ROOT} --shell=bun --silent start`), and its existing connectorSettings toggle (`enabled: true`, `exposePublicly: false`) already keeps it local-only, so it is not exposed through the tunnel.

@@ -371,9 +371,16 @@ public actor ConnectorManager {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let projectsURL = home.appendingPathComponent("Developer/Projects")
         let cacheURL = home.appendingPathComponent(".claude/plugins/cache")
+        let marketplacesURL = home.appendingPathComponent(".claude/plugins/marketplaces")
         var candidates: [URL] = []
 
         candidates.append(contentsOf: versionedPluginDirectories(cacheURL.appendingPathComponent(marketplaceName).appendingPathComponent(pluginName)))
+
+        // Plugins the marketplace vendors from third parties live under
+        // marketplaces/<marketplace>/external_plugins/<plugin> rather than the cache,
+        // so an enabled external plugin (e.g. imessage@claude-plugins-official) is only
+        // discoverable if this location is searched too.
+        candidates.append(marketplacesURL.appendingPathComponent(marketplaceName).appendingPathComponent("external_plugins").appendingPathComponent(pluginName))
 
         if marketplaceName == "ames-plugins" {
             candidates.append(projectsURL.appendingPathComponent("ames-plugins/plugins/\(pluginName)"))
