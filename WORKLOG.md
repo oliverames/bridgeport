@@ -1,3 +1,15 @@
+## 2026-07-18 - Local connector inventory and stale-toggle cleanup
+
+**What changed**: No source files changed. Reviewed the live vending surface against the history and worklog to answer which connectors Bridgeport still serves locally now that YNAB no longer depends on the bridge. The generated `~/.config/bridgeport/mcp_config.json` is the authoritative manifest: 20 connectors, 19 served locally at `http://localhost:8085/mcp/<name>` and one, `ynab-mcp-server`, exposed publicly at `https://mcp.amesvt.com/mcp/ynab`. Pruned four dead connector toggles from `config.json` connectorSettings that belonged to the archived `ames-connectors` marketplace and no longer resolve to a running server: `ames-unifi-mcp`, `imagerelay-mcp-server`, `lytho-mcp-server`, and `sprout-mcp-server`. The connectorSettings block dropped from 24 entries to 20.
+
+**Findings**: The genuinely Mac-bound local connectors, the ones that justify the bridge existing, are `apple-mail`, `apple-notes`, `apple-notifier`, `drafts`, `paste`, `macos-automator`, `computer-use`, `XcodeBuildMCP`, `pdf`, `playwright`, and `onepassword` (tied to the local 1Password app auth). The remaining local connectors are portable rather than Mac-bound and could run anywhere: `apple-docs` (a network fetch of developer.apple.com despite the name), `google-workspace`, `merriam-webster`, `excel`, `markitdown`, `pandoc`, `node_repl`, and `mock-echo`. Because YNAB now runs through the standalone hosted `ynab-mcp-server` path rather than needing Bridgeport's stdio bridging, Bridgeport's only remaining public entry is effectively legacy, and its real ongoing job is exposing this Mac's native apps to remote AI clients.
+
+**Left in place deliberately**: `imessage` and `chrome-devtools` remain enabled in connectorSettings but are not currently discovered, so they are toggled on yet not being vended. These read as wanted-but-not-resolving rather than abandoned, so they were kept rather than pruned; the open item is to confirm whether their sources are installed and discoverable.
+
+**Verification**: `config.json` re-parsed as valid JSON after the edit; the four target keys are absent, `imessage`, `chrome-devtools`, and the public `ynab-mcp-server` entry are intact, and the daemon was not running during the edit so there was no concurrent-write risk. The daemon's encoder uses sorted keys, so its next settings save renormalizes formatting without reintroducing the pruned entries.
+
+---
+
 ## 2026-07-13 - Current release gates
 
 **Current state**: Bridgeport 1.0.6 is published as a normal GitHub release. The DMG is Developer ID signed, notarized, stapled, and accepted by Gatekeeper. The release workflow and local verification are complete, so signing and packaging are no longer release blockers.
