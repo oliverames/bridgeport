@@ -69,7 +69,6 @@ func drawIcon(size: Int) throws -> NSBitmapImageRep {
 
     let lineColor = NSColor(calibratedWhite: 1, alpha: 0.88)
     let mutedLineColor = NSColor(calibratedWhite: 1, alpha: 0.42)
-    let nodeFill = NSColor(calibratedWhite: 1, alpha: 0.96)
 
     func stroke(_ path: NSBezierPath, color: NSColor, width: CGFloat) {
         color.setStroke()
@@ -79,53 +78,44 @@ func drawIcon(size: Int) throws -> NSBitmapImageRep {
         path.stroke()
     }
 
-    let arch = NSBezierPath()
-    arch.move(to: point(0.20, 0.42, size: iconSize))
-    arch.curve(
-        to: point(0.80, 0.42, size: iconSize),
-        controlPoint1: point(0.35, 0.75, size: iconSize),
-        controlPoint2: point(0.65, 0.75, size: iconSize)
-    )
-    stroke(arch, color: lineColor, width: iconSize * 0.046)
+    // Suspension bridge: main cables sweep from the deck ends up over two
+    // towers, with vertical hangers dropping to the deck between them.
+    let deckY: CGFloat = 0.40
+    let towerXs: [CGFloat] = [0.28, 0.72]
+    let towerTopY: CGFloat = 0.70
 
     let deck = NSBezierPath()
-    deck.move(to: point(0.18, 0.40, size: iconSize))
-    deck.line(to: point(0.82, 0.40, size: iconSize))
-    stroke(deck, color: lineColor, width: iconSize * 0.052)
+    deck.move(to: point(0.12, deckY, size: iconSize))
+    deck.line(to: point(0.88, deckY, size: iconSize))
+    stroke(deck, color: lineColor, width: iconSize * 0.055)
 
-    for x in [0.30, 0.39, 0.50, 0.61, 0.70] as [CGFloat] {
-        let y = 0.42 + 0.30 * sin((x - 0.20) / 0.60 * .pi)
+    // Cable sag between the towers, then straight anchor runs down to the deck ends.
+    let cable = NSBezierPath()
+    cable.move(to: point(0.12, deckY + 0.02, size: iconSize))
+    cable.line(to: point(towerXs[0], towerTopY, size: iconSize))
+    cable.curve(
+        to: point(towerXs[1], towerTopY, size: iconSize),
+        controlPoint1: point(0.42, 0.44, size: iconSize),
+        controlPoint2: point(0.58, 0.44, size: iconSize)
+    )
+    cable.line(to: point(0.88, deckY + 0.02, size: iconSize))
+    stroke(cable, color: lineColor, width: iconSize * 0.038)
+
+    for x in [0.38, 0.44, 0.50, 0.56, 0.62] as [CGFloat] {
+        // Approximate the quadratic-ish sag: lowest at center, rising toward towers.
+        let t = (x - 0.50) / 0.22
+        let y = 0.505 + (towerTopY - 0.505) * t * t
         let hanger = NSBezierPath()
         hanger.move(to: point(x, y, size: iconSize))
-        hanger.line(to: point(x, 0.40, size: iconSize))
-        stroke(hanger, color: mutedLineColor, width: iconSize * 0.018)
+        hanger.line(to: point(x, deckY, size: iconSize))
+        stroke(hanger, color: mutedLineColor, width: iconSize * 0.02)
     }
 
-    for x in [0.30, 0.70] as [CGFloat] {
+    for x in towerXs {
         let tower = NSBezierPath()
-        tower.move(to: point(x, 0.35, size: iconSize))
-        tower.line(to: point(x, 0.71, size: iconSize))
-        stroke(tower, color: lineColor, width: iconSize * 0.038)
-    }
-
-    let route = NSBezierPath()
-    route.move(to: point(0.28, 0.30, size: iconSize))
-    route.line(to: point(0.50, 0.21, size: iconSize))
-    route.line(to: point(0.72, 0.30, size: iconSize))
-    stroke(route, color: mutedLineColor, width: iconSize * 0.025)
-
-    for (x, y, radiusScale) in [
-        (0.18, 0.40, 0.030),
-        (0.50, 0.21, 0.034),
-        (0.82, 0.40, 0.030),
-        (0.30, 0.71, 0.026),
-        (0.70, 0.71, 0.026)
-    ] as [(CGFloat, CGFloat, CGFloat)] {
-        let radius = iconSize * radiusScale
-        let rect = NSRect(x: x * iconSize - radius, y: y * iconSize - radius, width: radius * 2, height: radius * 2)
-        let node = NSBezierPath(ovalIn: rect)
-        nodeFill.setFill()
-        node.fill()
+        tower.move(to: point(x, 0.30, size: iconSize))
+        tower.line(to: point(x, towerTopY + 0.05, size: iconSize))
+        stroke(tower, color: lineColor, width: iconSize * 0.045)
     }
 
     return bitmap

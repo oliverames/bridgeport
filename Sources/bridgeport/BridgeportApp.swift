@@ -25,9 +25,13 @@ struct BridgeportApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Bridgeport", systemImage: menuBarSymbol) {
-            Label("Bridgeport", systemImage: menuBarSymbol)
-                .font(.headline)
+        MenuBarExtra {
+            Label {
+                Text("Bridgeport")
+            } icon: {
+                Image(nsImage: BridgeMenuBarIcon.image(running: appState.isDaemonRunning))
+            }
+            .font(.headline)
 
             let totalCount = appState.discoveredConnectors.count
             Label {
@@ -85,6 +89,8 @@ struct BridgeportApp: App {
                 NSApplication.shared.terminate(nil)
             }
             .keyboardShortcut("q", modifiers: .command)
+        } label: {
+            Image(nsImage: BridgeMenuBarIcon.image(running: appState.isDaemonRunning))
         }
 
         Settings {
@@ -119,15 +125,62 @@ struct BridgeportApp: App {
         return "\(daemon) - \(appState.enabledConnectorCount)/\(totalCount) enabled - \(appState.activeSessionCount) active"
     }
 
-    private var menuBarSymbol: String {
-        let preferred = appState.isDaemonRunning
-            ? "app.connected.to.app.below.fill"
-            : "app.connected.to.app.below"
-        let fallback = appState.isDaemonRunning
-            ? "bolt.fill"
-            : "bolt"
+    // SF Symbols has no bridge glyph, so the menu bar icon is a hand-drawn
+    // suspension bridge rendered as a template image. When the daemon is
+    // stopped the bridge draws at reduced alpha, which template rendering
+    // shows as a dimmed icon.
+    enum BridgeMenuBarIcon {
+        static func image(running: Bool) -> NSImage {
+            let side: CGFloat = 18
+            let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
+                let alpha: CGFloat = running ? 1.0 : 0.45
+                let color = NSColor(calibratedWhite: 0, alpha: alpha)
 
-        return NSImage(systemSymbolName: preferred, accessibilityDescription: nil) == nil ? fallback : preferred
+                func stroke(_ path: NSBezierPath, width: CGFloat) {
+                    color.setStroke()
+                    path.lineWidth = width
+                    path.lineCapStyle = .round
+                    path.stroke()
+                }
+
+                func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+                    NSPoint(x: x * side, y: y * side)
+                }
+
+                let deck = NSBezierPath()
+                deck.move(to: pt(0.04, 0.34))
+                deck.line(to: pt(0.96, 0.34))
+                stroke(deck, width: 1.8)
+
+                let cable = NSBezierPath()
+                cable.move(to: pt(0.04, 0.36))
+                cable.line(to: pt(0.24, 0.80))
+                cable.curve(to: pt(0.76, 0.80), controlPoint1: pt(0.40, 0.42), controlPoint2: pt(0.60, 0.42))
+                cable.line(to: pt(0.96, 0.36))
+                stroke(cable, width: 1.4)
+
+                for x in [0.24, 0.76] as [CGFloat] {
+                    let tower = NSBezierPath()
+                    tower.move(to: pt(x, 0.26))
+                    tower.line(to: pt(x, 0.86))
+                    stroke(tower, width: 1.8)
+                }
+
+                for x in [0.42, 0.50, 0.58] as [CGFloat] {
+                    let t = (x - 0.50) / 0.26
+                    let hangerTop = 0.50 + (0.80 - 0.50) * t * t
+                    let hanger = NSBezierPath()
+                    hanger.move(to: pt(x, hangerTop))
+                    hanger.line(to: pt(x, 0.34))
+                    stroke(hanger, width: 1.0)
+                }
+
+                return true
+            }
+            image.isTemplate = true
+            image.accessibilityDescription = running ? "Bridgeport running" : "Bridgeport stopped"
+            return image
+        }
     }
 
     private var cloudflareStatusTint: Color {
