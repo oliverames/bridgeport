@@ -6,7 +6,7 @@ APP_NAME="Bridgeport"
 BINARY_NAME="bridgeport"
 BUNDLE_ID="com.oliverames.bridgeport"
 MIN_SYSTEM_VERSION="26.0"
-VERSION="${BRIDGEPORT_VERSION:-1.0.7}"
+VERSION="${BRIDGEPORT_VERSION:-1.0.8}"
 BUILD="${BRIDGEPORT_BUILD:-dev}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
