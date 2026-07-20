@@ -79,6 +79,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>Copyright 2026 Oliver Ames. All rights reserved.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Bridgeport runs local MCP connectors that automate Mac apps such as Notes on your behalf.</string>
 </dict>
 </plist>
 PLIST

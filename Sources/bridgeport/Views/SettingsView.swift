@@ -246,6 +246,23 @@ struct SettingsView: View {
                 } label: {
                     Label(appState.isDaemonRunning ? "Restart Daemon" : "Start Daemon", systemImage: appState.isDaemonRunning ? "arrow.clockwise.circle" : "play.circle")
                 }
+
+                Divider()
+
+                Toggle(isOn: Binding(
+                    get: { appState.launchAtLoginEnabled },
+                    set: { appState.setLaunchAtLogin($0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Launch Bridgeport at login")
+                        Text("Opens the menu bar app automatically. The daemon and tunnel start at login regardless.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onAppear {
+                    appState.refreshLaunchAtLoginStatus()
+                }
             }
 
             SettingsGroup(title: "Endpoints") {

@@ -11,6 +11,18 @@ public struct LaunchAgentCommandResult: Sendable {
 }
 
 public enum LaunchAgentManager {
+    /// Returns the executable path the daemon LaunchAgent should run.
+    ///
+    /// A binary inside an .app bundle must run in place: TCC attributes
+    /// Apple Events consent to the signed bundle, and a bare copy under
+    /// ~/.config/bridgeport/bin is silently denied automation with no
+    /// prompt. Bare binaries (swift run, .build products) return nil so
+    /// callers fall back to copying into the stable bin directory.
+    public static func bundleExecutablePath(for currentExecPath: String) -> String? {
+        let standardized = URL(fileURLWithPath: currentExecPath).standardizedFileURL.path
+        return standardized.contains(".app/Contents/MacOS/") ? standardized : nil
+    }
+
     public static func isLoaded(label: String, uid: UInt32) -> Bool {
         let result = runShell("/bin/launchctl", ["print", "gui/\(uid)/\(label)"])
         return result.status == 0

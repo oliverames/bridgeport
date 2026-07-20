@@ -3,6 +3,7 @@ import Observation
 
 #if os(macOS)
 import Darwin
+import ServiceManagement
 #endif
 
 @Observable
@@ -17,6 +18,7 @@ public final class AppState {
     public var allowQueryTokenAuth: Bool = false
     public var token: String = ""
     public var env: [String: String] = [:]
+    public var launchAtLoginEnabled: Bool = false
     public var onePasswordEnvironment = OnePasswordEnvironmentSettings()
     public var cloudflare = CloudflareSettings()
     public var cloudflareStatus = CloudflareTunnelStatus()
@@ -271,6 +273,36 @@ public final class AppState {
         isDaemonRunning = running
     }
 
+    public func refreshLaunchAtLoginStatus() {
+        #if os(macOS)
+        guard Bundle.main.bundleIdentifier != nil, Bundle.main.bundlePath.hasSuffix(".app") else {
+            launchAtLoginEnabled = false
+            return
+        }
+        launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+        #endif
+    }
+
+    public func setLaunchAtLogin(_ enabled: Bool) {
+        #if os(macOS)
+        guard Bundle.main.bundleIdentifier != nil, Bundle.main.bundlePath.hasSuffix(".app") else {
+            logMessage("AppState: launch-at-login requires running from the app bundle")
+            launchAtLoginEnabled = false
+            return
+        }
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            logMessage("AppState: launch-at-login \(enabled ? "register" : "unregister") failed: \(error)")
+        }
+        launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+        #endif
+    }
+
     public func installDaemon() async {
         let fileManager = FileManager.default
         let configDirectory = BridgeportPaths.configDirectory()
@@ -283,25 +315,32 @@ public final class AppState {
             }.value
         }
 
-        do {
-            if !fileManager.fileExists(atPath: binDir.path) {
-                try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
-            }
+        guard let currentExecURL = Bundle.main.executableURL else {
+            logMessage("AppState.installDaemon: Failed to find Bundle.main.executableURL")
+            return
+        }
 
-            guard let currentExecURL = Bundle.main.executableURL else {
-                logMessage("AppState.installDaemon: Failed to find Bundle.main.executableURL")
+        let daemonExecutablePath: String
+        if let bundlePath = LaunchAgentManager.bundleExecutablePath(for: currentExecURL.path) {
+            daemonExecutablePath = bundlePath
+            logMessage("AppState: Using app bundle binary at \(bundlePath)")
+        } else {
+            do {
+                if !fileManager.fileExists(atPath: binDir.path) {
+                    try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
+                }
+
+                if fileManager.fileExists(atPath: destURL.path) {
+                    try fileManager.removeItem(at: destURL)
+                }
+
+                try fileManager.copyItem(at: currentExecURL, to: destURL)
+                logMessage("AppState: Copied binary to \(destURL.path)")
+            } catch {
+                logMessage("AppState: Failed to copy binary: \(error)")
                 return
             }
-
-            if fileManager.fileExists(atPath: destURL.path) {
-                try fileManager.removeItem(at: destURL)
-            }
-
-            try fileManager.copyItem(at: currentExecURL, to: destURL)
-            logMessage("AppState: Copied binary to \(destURL.path)")
-        } catch {
-            logMessage("AppState: Failed to copy binary: \(error)")
-            return
+            daemonExecutablePath = destURL.path
         }
 
         do {
@@ -310,7 +349,7 @@ public final class AppState {
             }
             let plistData = try LaunchAgentPlist.makeData(
                 label: label,
-                executablePath: destURL.path,
+                executablePath: daemonExecutablePath,
                 stdoutPath: configDirectory.appendingPathComponent("stdout.log").path,
                 stderrPath: configDirectory.appendingPathComponent("stderr.log").path
             )

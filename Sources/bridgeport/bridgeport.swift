@@ -214,23 +214,30 @@ struct bridgeport {
                     LaunchAgentManager.bootout(label: "com.oliverames.bridgeport", uid: uid, plistURL: plistURL)
                 }
 
-                do {
-                    if !fileManager.fileExists(atPath: binDir.path) {
-                        try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
+                let daemonExecutablePath: String
+                if let bundlePath = LaunchAgentManager.bundleExecutablePath(for: CommandLine.arguments[0]) {
+                    daemonExecutablePath = bundlePath
+                    print("  Using app bundle binary at \(bundlePath)")
+                } else {
+                    do {
+                        if !fileManager.fileExists(atPath: binDir.path) {
+                            try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
+                        }
+
+                        let currentExecPath = CommandLine.arguments[0]
+                        let currentExecURL = URL(fileURLWithPath: currentExecPath)
+
+                        if fileManager.fileExists(atPath: destURL.path) {
+                            try fileManager.removeItem(at: destURL)
+                        }
+
+                        try fileManager.copyItem(at: currentExecURL, to: destURL)
+                        print("  Copied binary to \(destURL.path)")
+                    } catch {
+                        print("Error: Failed to copy binary: \(error)")
+                        exit(1)
                     }
-
-                    let currentExecPath = CommandLine.arguments[0]
-                    let currentExecURL = URL(fileURLWithPath: currentExecPath)
-
-                    if fileManager.fileExists(atPath: destURL.path) {
-                        try fileManager.removeItem(at: destURL)
-                    }
-
-                    try fileManager.copyItem(at: currentExecURL, to: destURL)
-                    print("  Copied binary to \(destURL.path)")
-                } catch {
-                    print("Error: Failed to copy binary: \(error)")
-                    exit(1)
+                    daemonExecutablePath = destURL.path
                 }
 
                 do {
@@ -239,7 +246,7 @@ struct bridgeport {
                     }
                     let plistData = try LaunchAgentPlist.makeData(
                         label: "com.oliverames.bridgeport",
-                        executablePath: destURL.path,
+                        executablePath: daemonExecutablePath,
                         stdoutPath: configDirectory.appendingPathComponent("stdout.log").path,
                         stderrPath: configDirectory.appendingPathComponent("stderr.log").path
                     )
