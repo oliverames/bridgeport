@@ -1,3 +1,15 @@
+## 2026-07-20 - Bridge iconography for app icon and menu bar
+
+**What changed**: Both icons now depict a suspension bridge (f20dd08). Verified empirically that SF Symbols has no bridge glyph (`NSImage(systemSymbolName:)` probes plus a grep of the CoreGlyphs `name_availability.plist` catalog), so the menu bar icon is a hand-drawn 18pt template `NSImage` (`BridgeMenuBarIcon` in `BridgeportApp.swift`), replacing `app.connected.to.app.below` and its `bolt` fallback. Daemon state maps to alpha: full when running, 0.45 when stopped, which template rendering shows as a dimmed icon. `script/generate_app_icon.swift` dropped the network-route overlay and node dots so the bridge is the sole subject; `AppIcon.icns` and the full iconset were regenerated.
+
+**Decisions made**: Kept the two bridges geometrically consistent by drawing both in normalized 0-1 coordinates. First menu-bar pass had curled cable ends at 18px; straightened the anchor runs after rendering a PNG probe in the scratchpad rather than judging from code.
+
+**Verification**: `swift build` clean, `swift test` 44/44, visual check of the regenerated 256px icon PNG and a rendered 18px menu-bar probe.
+
+**Left off at**: Committed and pushed. Finder may cache the old `.icns` until the packaged app is rebuilt. Prior session's open items (PR sweetrb/apple-notes-mcp#86 review, subprocess-cap question) still open, unchanged this session.
+
+---
+
 ## 2026-07-20 - Home-server deployment, 1.0.7 release, apple-notes perf fix
 
 **What changed**: Deployed Bridgeport to home-server as its production host: installed from the v1.0.6 DMG, daemon LaunchAgent running, single connector `apple-notes` (npm `apple-notes-mcp` 2.6.x pinned in `~/.config/bridgeport/connectors/apple-notes`), Cloudflare tunnel `bridgeport-home-server` (132665b6) serving `https://mcp.amesvt.com`, exported as "Apple Notes (BridgePort)" with the real Notes app icon, connected to Oliver's Claude account via the OAuth 2.1 flow. Released **1.0.7** (tagged, notarized, DMG + sha256 on GitHub, home-server upgraded): `NSAppleEventsUsageDescription` added to both bundle-plist heredocs (`build_and_run.sh` in 3d99a42, `package_release.sh` in d28c222 — the two scripts have independent Info.plist heredocs and had drifted), `--daemon-install`/AppState now point the LaunchAgent at the app bundle binary when running from a bundle (`LaunchAgentManager.bundleExecutablePath`), and a Launch-at-login toggle (SMAppService) landed in Dashboard > Service.
