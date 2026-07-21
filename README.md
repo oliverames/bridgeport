@@ -423,4 +423,4 @@ CI and release publication are separate workflows. CI runs tests, a release buil
 
 ## License
 
-Private. Copyright Oliver Ames.
+[GPL-3.0](LICENSE). Copyright Oliver Ames.

@@ -7,7 +7,7 @@ Bridgeport uses two separate automation paths:
 
 ## Public-Release Gate
 
-Before changing repository visibility, select and add the intended source license. The current repository is copyright Oliver Ames with no grant of reuse, and that legal choice cannot be inferred from the code. Also confirm the current tree contains no private deployment values and decide whether old documentation examples in Git history require a history rewrite or a fresh public repository.
+This gate was completed on 2026-07-20: the repository is public under GPL-3.0 (`LICENSE`), the tree was confirmed free of private deployment values (the only `amesvt.com` match in code is the clean-install probe that scans for leaks), and full-history Gitleaks passed, so no history rewrite was needed. Re-run this review before any future visibility change in the other direction or if deployment-specific values ever land in the tree.
 
 ## Local Preflight
 
