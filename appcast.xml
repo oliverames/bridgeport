@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Bridgeport Updates</title>
+    <link>https://raw.githubusercontent.com/oliverames/bridgeport/main/appcast.xml</link>
+    <description>Updates for Bridgeport - local MCP connector host for macOS</description>
+    <language>en</language>
+    <item>
+      <title>Version 1.0.9</title>
+      <link>https://github.com/oliverames/bridgeport/releases/tag/v1.0.9</link>
+      <sparkle:version>1.0.9</sparkle:version>
+      <sparkle:shortVersionString>1.0.9</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h2>Bridgeport 1.0.9</h2>
+        <p>Adds automatic updates via Sparkle, and the project is now open source under GPL-3.0.</p>
+        <ul>
+          <li>A <b>Check for Updates…</b> item in the menu bar menu, with automatic update checks.</li>
+          <li>Updates are EdDSA-signed and verified before extraction; the app remains Developer ID signed and notarized.</li>
+          <li>Bridge iconography from 1.0.8 is included for installs upgrading from 1.0.7 or earlier.</li>
+        </ul>
+      ]]></description>
+      <pubDate>Tue, 21 Jul 2026 12:20:00 -0400</pubDate>
+      <enclosure
+        url="https://github.com/oliverames/bridgeport/releases/download/v1.0.9/Bridgeport-1.0.9.dmg"
+        sparkle:edSignature="jjLXxEVPYOBv9dakK6fPtp+Adta4+uIHzbGxUNb2ILllWyr7US0Evvg/0+zWQE+qiVnqkQAh/OD09gjqlUt1Bw=="
+        length="3544770"
+        type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
