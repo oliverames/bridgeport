@@ -36,6 +36,13 @@ let package = Package(
             dependencies: ["bridgeport"],
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+            linkerSettings: [
+                // SwiftPM does not place binary-artifact frameworks on the
+                // test bundle's search path; point dyld at the Sparkle
+                // artifact directly (relative to the package root, which is
+                // the working directory for `swift test`).
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64"])
             ]
         ),
     ],
