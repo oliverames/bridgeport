@@ -36,6 +36,17 @@ script/verify_clean_install.sh dist/release/Bridgeport-1.0.6.dmg --require-notar
 
 `package_release.sh` requires a Developer ID Application identity. `notarize_release.sh` resolves App Store Connect credentials through the canonical 1Password-backed environment and never writes them to the repository.
 
+## Sparkle Appcast
+
+Every release must also be signed for Sparkle and appended to `appcast.xml` on `main`, which installed apps poll via the raw GitHub URL declared in `SUFeedURL`.
+
+```bash
+.build/artifacts/sparkle/Sparkle/bin/sign_update \
+  dist/release/Bridgeport-1.0.6.dmg --account bridgeport
+```
+
+The EdDSA private key lives in the login Keychain under the `bridgeport` account (created with `generate_keys --account bridgeport`; the matching `SUPublicEDKey` is embedded in both Info.plist heredocs). Add an `<item>` to `appcast.xml` with the new version, the GitHub release download URL as the enclosure, and the `sparkle:edSignature` and `length` values printed by `sign_update`. Commit the appcast with the release-notes commit so the feed and the tag land together.
+
 ## Publish
 
 Add `docs/release-notes/v1.0.6.md`, commit and push the release changes, then create and push an annotated tag:
