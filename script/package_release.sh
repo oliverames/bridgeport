@@ -52,6 +52,17 @@ if [ -f "$APP_ICON" ]; then
   cp "$APP_ICON" "$APP_RESOURCES/AppIcon.icns"
 fi
 
+# Embed Sparkle.framework; the binary links it with an
+# @executable_path/../Frameworks rpath (see Package.swift).
+SPARKLE_FRAMEWORK="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+if [ ! -d "$SPARKLE_FRAMEWORK" ]; then
+  echo "Sparkle.framework not found at $SPARKLE_FRAMEWORK; run swift package resolve" >&2
+  exit 1
+fi
+APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
+mkdir -p "$APP_FRAMEWORKS"
+ditto "$SPARKLE_FRAMEWORK" "$APP_FRAMEWORKS/Sparkle.framework"
+
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -81,11 +92,34 @@ cat >"$INFO_PLIST" <<PLIST
   <string>NSApplication</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Bridgeport runs local MCP connectors that automate Mac apps such as Notes on your behalf.</string>
+  <key>SUFeedURL</key>
+  <string>https://raw.githubusercontent.com/oliverames/bridgeport/main/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>5ijlL6wlqyqe1jvOlMQhlf2ntqVKfhnxR5lp58iKpT0=</string>
+  <key>SURequireSignedFeed</key>
+  <true/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
 </dict>
 </plist>
 PLIST
 
 plutil -lint "$INFO_PLIST"
+
+# Sparkle's nested executables must be signed individually (inside-out)
+# before the framework and app; --deep does not apply the runtime option
+# or preserve the XPC services' entitlements correctly.
+EMBEDDED_SPARKLE="$APP_FRAMEWORKS/Sparkle.framework"
+codesign --force --options runtime --timestamp --preserve-metadata=entitlements \
+  --sign "$SIGN_IDENTITY" "$EMBEDDED_SPARKLE/Versions/B/XPCServices/Installer.xpc"
+codesign --force --options runtime --timestamp --preserve-metadata=entitlements \
+  --sign "$SIGN_IDENTITY" "$EMBEDDED_SPARKLE/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --options runtime --timestamp \
+  --sign "$SIGN_IDENTITY" "$EMBEDDED_SPARKLE/Versions/B/Autoupdate"
+codesign --force --options runtime --timestamp \
+  --sign "$SIGN_IDENTITY" "$EMBEDDED_SPARKLE/Versions/B/Updater.app"
+codesign --force --options runtime --timestamp \
+  --sign "$SIGN_IDENTITY" "$EMBEDDED_SPARKLE"
 
 codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Sparkle
 
 final class AppDelegate: NSObject, NSApplicationDelegate, Sendable {
     @MainActor
@@ -18,10 +19,25 @@ struct BridgeportApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var appState: AppState
 
+    // Sparkle only makes sense when running from an installed bundle whose
+    // Info.plist carries the feed configuration; `swift run` and the CLI
+    // paths have no SUFeedURL, so the updater stays nil there.
+    private let updaterController: SPUStandardUpdaterController?
+
     init() {
         let appState = AppState()
         _appState = State(initialValue: appState)
         SettingsWindowCoordinator.shared.configure(appState: appState)
+
+        if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+        } else {
+            updaterController = nil
+        }
     }
 
     var body: some Scene {
@@ -84,6 +100,12 @@ struct BridgeportApp: App {
             .disabled(!appState.cloudflare.enabled)
 
             Divider()
+
+            if let updaterController {
+                Button("Check for Updates…") {
+                    updaterController.checkForUpdates(nil)
+                }
+            }
 
             Button("Quit Bridgeport") {
                 NSApplication.shared.terminate(nil)
