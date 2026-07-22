@@ -6,6 +6,28 @@
     <description>Updates for Bridgeport - local MCP connector host for macOS</description>
     <language>en</language>
     <item>
+      <title>Version 1.0.11</title>
+      <link>https://github.com/oliverames/bridgeport/releases/tag/v1.0.11</link>
+      <sparkle:version>1.0.11</sparkle:version>
+      <sparkle:shortVersionString>1.0.11</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h2>Bridgeport 1.0.11</h2>
+        <p>Keeps cloud MCP connectors signed in after their 12-hour access token expires.</p>
+        <ul>
+          <li>OAuth clients now receive rotating refresh tokens.</li>
+          <li>Refresh tokens are bound to their client and MCP resource, and cannot be reused after rotation.</li>
+          <li>Existing token files remain readable. Connections created before this release need one new sign-in.</li>
+        </ul>
+      ]]></description>
+      <pubDate>Wed, 22 Jul 2026 10:06:44 -0400</pubDate>
+      <enclosure
+        url="https://github.com/oliverames/bridgeport/releases/download/v1.0.11/Bridgeport-1.0.11.dmg"
+        sparkle:edSignature="nt8ruwBXmJwHKSlgsnd+cqF1H34V9V6DuGztw3NxfMeuPSYfkIvdBpPoHMHZou0N0ZQRlA1VKj4pA3+irDB8Ag=="
+        length="3551937"
+        type="application/octet-stream"/>
+    </item>
+    <item>
       <title>Version 1.0.9</title>
       <link>https://github.com/oliverames/bridgeport/releases/tag/v1.0.9</link>
       <sparkle:version>1.0.9</sparkle:version>

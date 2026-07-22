@@ -14,10 +14,36 @@ private struct PersistedOAuthClientRegistry: Codable {
 
 private struct PersistedOAuthAccessTokens: Codable {
     let tokens: [PersistedOAuthAccessToken]
+    let refreshTokens: [PersistedOAuthRefreshToken]
+
+    private enum CodingKeys: String, CodingKey {
+        case tokens
+        case refreshTokens
+    }
+
+    init(tokens: [PersistedOAuthAccessToken], refreshTokens: [PersistedOAuthRefreshToken]) {
+        self.tokens = tokens
+        self.refreshTokens = refreshTokens
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tokens = try container.decode([PersistedOAuthAccessToken].self, forKey: .tokens)
+        refreshTokens =
+            try container.decodeIfPresent([PersistedOAuthRefreshToken].self, forKey: .refreshTokens)
+            ?? []
+    }
 }
 
 private struct PersistedOAuthAccessToken: Codable {
     let token: String
+    let resource: String
+    let expiresAt: Date
+}
+
+private struct PersistedOAuthRefreshToken: Codable {
+    let token: String
+    let clientID: String
     let resource: String
     let expiresAt: Date
 }
@@ -37,23 +63,42 @@ private struct OAuthAccessToken: Sendable {
     let expiresAt: Date
 }
 
+private struct OAuthRefreshToken: Sendable {
+    let token: String
+    let clientID: String
+    let resource: String
+    let expiresAt: Date
+}
+
+public struct OAuthTokenPair: Sendable, Equatable {
+    public let accessToken: String
+    public let refreshToken: String
+}
+
 public actor OAuthTokenStore {
     private static let maxPersistedClients = 256
+    public static let accessTokenLifetime: TimeInterval = 12 * 60 * 60
+    private static let refreshTokenLifetime: TimeInterval = 30 * 24 * 60 * 60
 
     private let clientRegistryURL: URL?
     private let accessTokenStoreURL: URL?
     private var clients: [String: OAuthRegisteredClient]
     private var authorizationCodes: [String: OAuthAuthorizationCode] = [:]
     private var accessTokens: [String: OAuthAccessToken]
+    private var refreshTokens: [String: OAuthRefreshToken]
 
     public init(clientRegistryURL: URL? = nil, accessTokenStoreURL: URL? = nil) {
         self.clientRegistryURL = clientRegistryURL
         self.accessTokenStoreURL = accessTokenStoreURL
         self.clients = Self.loadClients(from: clientRegistryURL)
-        self.accessTokens = Self.loadAccessTokens(from: accessTokenStoreURL)
+        let persistedTokens = Self.loadTokens(from: accessTokenStoreURL)
+        self.accessTokens = persistedTokens.accessTokens
+        self.refreshTokens = persistedTokens.refreshTokens
     }
 
-    public func registerClient(clientName: String, redirectURIs: [String], now: Date = Date()) -> OAuthRegisteredClient {
+    public func registerClient(clientName: String, redirectURIs: [String], now: Date = Date())
+        -> OAuthRegisteredClient
+    {
         let client = OAuthRegisteredClient(
             clientID: ConfigManager.generateSecureToken(),
             clientName: clientName,
@@ -70,19 +115,23 @@ public actor OAuthTokenStore {
         clients[id]
     }
 
-    public func adoptClientIfNeeded(clientID: String, clientName: String, redirectURI: String, now: Date = Date()) -> OAuthRegisteredClient? {
+    public func adoptClientIfNeeded(
+        clientID: String, clientName: String, redirectURI: String, now: Date = Date()
+    ) -> OAuthRegisteredClient? {
         if let client = clients[clientID] {
             return client
         }
 
         guard OAuthSupport.isBridgeportGeneratedClientID(clientID),
-              OAuthSupport.isAllowedRedirectURI(redirectURI) else {
+            OAuthSupport.isAllowedRedirectURI(redirectURI)
+        else {
             return nil
         }
 
         let client = OAuthRegisteredClient(
             clientID: clientID,
-            clientName: clientName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "OAuth client" : clientName,
+            clientName: clientName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "OAuth client" : clientName,
             redirectURIs: [redirectURI],
             issuedAt: Int(now.timeIntervalSince1970)
         )
@@ -121,23 +170,41 @@ public actor OAuthTokenStore {
         redirectURI: String,
         codeVerifier: String,
         now: Date = Date()
-    ) -> String? {
+    ) -> OAuthTokenPair? {
         cleanup(now: now)
         guard let pending = authorizationCodes.removeValue(forKey: code),
-              pending.clientID == clientID,
-              pending.redirectURI == redirectURI,
-              OAuthSupport.constantTimeEquals(OAuthSupport.pkceS256Challenge(for: codeVerifier), pending.codeChallenge) else {
+            pending.clientID == clientID,
+            pending.redirectURI == redirectURI,
+            OAuthSupport.constantTimeEquals(
+                OAuthSupport.pkceS256Challenge(for: codeVerifier), pending.codeChallenge)
+        else {
             return nil
         }
 
-        let token = ConfigManager.generateSecureToken()
-        accessTokens[token] = OAuthAccessToken(
-            token: token,
-            resource: pending.resource,
-            expiresAt: now.addingTimeInterval(12 * 60 * 60)
-        )
+        let tokenPair = issueTokenPair(clientID: clientID, resource: pending.resource, now: now)
         persistAccessTokens()
-        return token
+        return tokenPair
+    }
+
+    public func redeemRefreshToken(
+        _ token: String,
+        clientID: String,
+        resource: String? = nil,
+        now: Date = Date()
+    ) -> OAuthTokenPair? {
+        cleanup(now: now)
+        guard let pending = refreshTokens[token],
+            OAuthSupport.constantTimeEquals(pending.clientID, clientID),
+            resource.map({ OAuthSupport.constantTimeEquals(pending.resource, $0) }) ?? true
+        else {
+            return nil
+        }
+
+        refreshTokens.removeValue(forKey: token)
+        let tokenPair = issueTokenPair(
+            clientID: pending.clientID, resource: pending.resource, now: now)
+        persistAccessTokens()
+        return tokenPair
     }
 
     public func isValidAccessToken(_ token: String, resource: String, now: Date = Date()) -> Bool {
@@ -154,10 +221,30 @@ public actor OAuthTokenStore {
     private func cleanup(now: Date) {
         authorizationCodes = authorizationCodes.filter { $0.value.expiresAt > now }
         let liveTokens = accessTokens.filter { $0.value.expiresAt > now }
-        if liveTokens.count != accessTokens.count {
+        let liveRefreshTokens = refreshTokens.filter { $0.value.expiresAt > now }
+        if liveTokens.count != accessTokens.count || liveRefreshTokens.count != refreshTokens.count
+        {
             accessTokens = liveTokens
+            refreshTokens = liveRefreshTokens
             persistAccessTokens()
         }
+    }
+
+    private func issueTokenPair(clientID: String, resource: String, now: Date) -> OAuthTokenPair {
+        let accessToken = ConfigManager.generateSecureToken()
+        let refreshToken = ConfigManager.generateSecureToken()
+        accessTokens[accessToken] = OAuthAccessToken(
+            token: accessToken,
+            resource: resource,
+            expiresAt: now.addingTimeInterval(Self.accessTokenLifetime)
+        )
+        refreshTokens[refreshToken] = OAuthRefreshToken(
+            token: refreshToken,
+            clientID: clientID,
+            resource: resource,
+            expiresAt: now.addingTimeInterval(Self.refreshTokenLifetime)
+        )
+        return OAuthTokenPair(accessToken: accessToken, refreshToken: refreshToken)
     }
 
     private func pruneClientsIfNeeded() {
@@ -170,26 +257,41 @@ public actor OAuthTokenStore {
 
     private static func loadClients(from url: URL?) -> [String: OAuthRegisteredClient] {
         guard let url,
-              let data = try? Data(contentsOf: url),
-              let registry = try? JSONDecoder().decode(PersistedOAuthClientRegistry.self, from: data) else {
+            let data = try? Data(contentsOf: url),
+            let registry = try? JSONDecoder().decode(PersistedOAuthClientRegistry.self, from: data)
+        else {
             return [:]
         }
 
         return Dictionary(uniqueKeysWithValues: registry.clients.map { ($0.clientID, $0) })
     }
 
-    private static func loadAccessTokens(from url: URL?, now: Date = Date()) -> [String: OAuthAccessToken] {
+    private static func loadTokens(
+        from url: URL?,
+        now: Date = Date()
+    ) -> (accessTokens: [String: OAuthAccessToken], refreshTokens: [String: OAuthRefreshToken]) {
         guard let url,
-              let data = try? Data(contentsOf: url),
-              let persisted = try? JSONDecoder().decode(PersistedOAuthAccessTokens.self, from: data) else {
-            return [:]
+            let data = try? Data(contentsOf: url),
+            let persisted = try? JSONDecoder().decode(PersistedOAuthAccessTokens.self, from: data)
+        else {
+            return ([:], [:])
         }
 
-        var tokens: [String: OAuthAccessToken] = [:]
+        var accessTokens: [String: OAuthAccessToken] = [:]
         for entry in persisted.tokens where entry.expiresAt > now {
-            tokens[entry.token] = OAuthAccessToken(token: entry.token, resource: entry.resource, expiresAt: entry.expiresAt)
+            accessTokens[entry.token] = OAuthAccessToken(
+                token: entry.token, resource: entry.resource, expiresAt: entry.expiresAt)
         }
-        return tokens
+        var refreshTokens: [String: OAuthRefreshToken] = [:]
+        for entry in persisted.refreshTokens where entry.expiresAt > now {
+            refreshTokens[entry.token] = OAuthRefreshToken(
+                token: entry.token,
+                clientID: entry.clientID,
+                resource: entry.resource,
+                expiresAt: entry.expiresAt
+            )
+        }
+        return (accessTokens, refreshTokens)
     }
 
     private func persistClients() {
@@ -197,7 +299,8 @@ public actor OAuthTokenStore {
             return
         }
 
-        let registry = PersistedOAuthClientRegistry(clients: clients.values.sorted { $0.clientID < $1.clientID })
+        let registry = PersistedOAuthClientRegistry(
+            clients: clients.values.sorted { $0.clientID < $1.clientID })
         Self.writePrivateJSON(registry, to: clientRegistryURL, label: "OAuth client registry")
     }
 
@@ -206,9 +309,24 @@ public actor OAuthTokenStore {
             return
         }
 
-        let persisted = PersistedOAuthAccessTokens(tokens: accessTokens.values
-            .sorted { $0.token < $1.token }
-            .map { PersistedOAuthAccessToken(token: $0.token, resource: $0.resource, expiresAt: $0.expiresAt) })
+        let persisted = PersistedOAuthAccessTokens(
+            tokens: accessTokens.values
+                .sorted { $0.token < $1.token }
+                .map {
+                    PersistedOAuthAccessToken(
+                        token: $0.token, resource: $0.resource, expiresAt: $0.expiresAt)
+                },
+            refreshTokens: refreshTokens.values
+                .sorted { $0.token < $1.token }
+                .map {
+                    PersistedOAuthRefreshToken(
+                        token: $0.token,
+                        clientID: $0.clientID,
+                        resource: $0.resource,
+                        expiresAt: $0.expiresAt
+                    )
+                }
+        )
         Self.writePrivateJSON(persisted, to: accessTokenStoreURL, label: "OAuth access tokens")
     }
 
@@ -284,8 +402,9 @@ public enum OAuthSupport {
 
     public static func isAllowedRedirectURI(_ value: String) -> Bool {
         guard let components = URLComponents(string: value),
-              let scheme = components.scheme?.lowercased(),
-              let host = components.host?.lowercased() else {
+            let scheme = components.scheme?.lowercased(),
+            let host = components.host?.lowercased()
+        else {
             return false
         }
 
@@ -306,7 +425,9 @@ public enum OAuthSupport {
         }
 
         return value.allSatisfy { character in
-            character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == "-")
+            character.isASCII
+                && (character.isLetter || character.isNumber || character == "_"
+                    || character == "-")
         }
     }
 

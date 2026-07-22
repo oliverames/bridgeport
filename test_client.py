@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import os
 import socket
@@ -234,7 +236,7 @@ def run_tests():
                 raise AssertionError("Icon GET returned an empty body")
             log("PASS: Public icon endpoint handles HEAD and GET")
 
-            log("Test 9: OAuth authorization requires a scoped public resource...")
+            log("Test 9: OAuth authorization and refresh-token rotation...")
             register_req = urllib.request.Request(
                 f"http://localhost:{port}/oauth/register",
                 data=json.dumps({
@@ -245,11 +247,16 @@ def run_tests():
             )
             register_response = urllib.request.urlopen(register_req, timeout=10)
             client_id = json.loads(register_response.read().decode("utf-8"))["client_id"]
+            code_verifier = "bridgeport-smoke-test-verifier"
+            code_challenge = base64.urlsafe_b64encode(
+                hashlib.sha256(code_verifier.encode("utf-8")).digest()
+            ).decode("ascii").rstrip("=")
+            resource = f"http://localhost:{port}/mcp/mock-echo"
             authorize_params = {
                 "response_type": "code",
                 "client_id": client_id,
                 "redirect_uri": "http://localhost/callback",
-                "code_challenge": "test-challenge",
+                "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
             }
             try:
@@ -261,14 +268,73 @@ def run_tests():
             except urllib.error.HTTPError as e:
                 if e.code != 400:
                     raise
-            authorize_params["resource"] = f"http://localhost:{port}/mcp/mock-echo"
+            authorize_params["resource"] = resource
             authorize_response = urllib.request.urlopen(
                 f"http://localhost:{port}/oauth/authorize?{urllib.parse.urlencode(authorize_params)}",
                 timeout=10,
             )
             if authorize_response.code != 200:
                 raise AssertionError(f"Expected OAuth approval form, got {authorize_response.code}")
-            log("PASS: OAuth authorization rejects missing resource and accepts public connector resource")
+            approval_form = dict(authorize_params)
+            approval_form["bridgeport_token"] = TOKEN
+            approval_request = urllib.request.Request(
+                f"http://localhost:{port}/oauth/authorize",
+                data=urllib.parse.urlencode(approval_form).encode("utf-8"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    return None
+
+            try:
+                urllib.request.build_opener(NoRedirect).open(approval_request, timeout=10)
+                raise AssertionError("Expected OAuth approval to redirect with an authorization code")
+            except urllib.error.HTTPError as e:
+                if e.code not in (302, 303):
+                    raise
+                redirect_url = e.headers["Location"]
+            code = urllib.parse.parse_qs(urllib.parse.urlparse(redirect_url).query)["code"][0]
+            token_request = urllib.request.Request(
+                f"http://localhost:{port}/oauth/token",
+                data=urllib.parse.urlencode({
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "client_id": client_id,
+                    "redirect_uri": "http://localhost/callback",
+                    "code_verifier": code_verifier,
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            token_pair = json.loads(urllib.request.urlopen(token_request, timeout=10).read().decode("utf-8"))
+            refresh_data = urllib.parse.urlencode({
+                "grant_type": "refresh_token",
+                "refresh_token": token_pair["refresh_token"],
+                "client_id": client_id,
+                "resource": resource,
+            }).encode("utf-8")
+
+            def refresh_request():
+                return urllib.request.Request(
+                    f"http://localhost:{port}/oauth/token",
+                    data=refresh_data,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+
+            rotated_pair = json.loads(
+                urllib.request.urlopen(refresh_request(), timeout=10).read().decode("utf-8")
+            )
+            if rotated_pair["access_token"] == token_pair["access_token"]:
+                raise AssertionError("Refresh grant did not rotate the access token")
+            if rotated_pair["refresh_token"] == token_pair["refresh_token"]:
+                raise AssertionError("Refresh grant did not rotate the refresh token")
+            try:
+                urllib.request.urlopen(refresh_request(), timeout=10)
+                raise AssertionError("Reused refresh token was accepted")
+            except urllib.error.HTTPError as e:
+                if e.code != 400:
+                    raise
+            log("PASS: OAuth authorization rejects unscoped requests and rotates refresh tokens")
 
             log("Test 10: Disallowed Origin is rejected...")
             bad_origin_req = request(

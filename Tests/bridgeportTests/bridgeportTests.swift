@@ -1,8 +1,10 @@
 import Foundation
 import Testing
+
 @testable import bridgeport
+
 #if os(macOS)
-import Darwin
+    import Darwin
 #endif
 
 @Test func normalizedRoutePathsAreStable() {
@@ -39,13 +41,14 @@ import Darwin
 }
 
 @Test func dotenvParserHandlesMountedOnePasswordFileShape() {
-    let values = ConnectorManager.parseDotenv("""
-    # 1Password mounted env
-    export YNAB_API_TOKEN="ynab-secret"
-    GOOGLE_CLIENT_ID=plain-id
-    EMPTY=
-    SINGLE_QUOTED='value'
-    """)
+    let values = ConnectorManager.parseDotenv(
+        """
+        # 1Password mounted env
+        export YNAB_API_TOKEN="ynab-secret"
+        GOOGLE_CLIENT_ID=plain-id
+        EMPTY=
+        SINGLE_QUOTED='value'
+        """)
 
     #expect(values["YNAB_API_TOKEN"] == "ynab-secret")
     #expect(values["GOOGLE_CLIENT_ID"] == "plain-id")
@@ -74,7 +77,8 @@ import Darwin
     }
     """.write(to: settings, atomically: true, encoding: .utf8)
 
-    let values = ConfigManager.defaultEnvReferences(claudeEnvURL: claudeEnv, claudeSettingsURL: settings)
+    let values = ConfigManager.defaultEnvReferences(
+        claudeEnvURL: claudeEnv, claudeSettingsURL: settings)
 
     #expect(values["GITHUB_TOKEN"] == "op://Development/GitHub/credential")
     #expect(values["PLAIN_TOKEN"] == nil)
@@ -97,7 +101,8 @@ import Darwin
     }
     """.write(to: settings, atomically: true, encoding: .utf8)
 
-    let values = ConfigManager.defaultEnvReferences(claudeEnvURL: missingEnv, claudeSettingsURL: settings)
+    let values = ConfigManager.defaultEnvReferences(
+        claudeEnvURL: missingEnv, claudeSettingsURL: settings)
 
     #expect(values["GITHUB_TOKEN"] == nil)
     #expect(values["GITHUB_TOKEN_REF"] == "op://Development/GitHub/credential")
@@ -120,7 +125,8 @@ import Darwin
         importedFrom: root.path,
         sourceKind: .mirrored
     )
-    let manager = ConnectorManager(config: BridgeportConfig(env: [:]), processEnvironment: ["PATH": "/usr/bin"])
+    let manager = ConnectorManager(
+        config: BridgeportConfig(env: [:]), processEnvironment: ["PATH": "/usr/bin"])
 
     let resolved = await manager.resolveEnvironment(for: connector)
 
@@ -173,16 +179,17 @@ import Darwin
         env: [
             "CONNECTOR_TOKEN": "${YNAB_API_TOKEN}",
             "SHARED_VALUE": "from-connector",
-            "YNAB_ALLOW_WRITES": "1"
+            "YNAB_ALLOW_WRITES": "1",
         ],
         importedFrom: root.path,
         sourceKind: .imported
     )
     let config = BridgeportConfig(
-        onePasswordEnvironment: OnePasswordEnvironmentSettings(enabled: true, localEnvFilePath: envFile.path),
+        onePasswordEnvironment: OnePasswordEnvironmentSettings(
+            enabled: true, localEnvFilePath: envFile.path),
         env: [
             "CONFIG_ONLY": "from-config",
-            "CONFIG_FROM_MOUNT": "${YNAB_API_TOKEN}"
+            "CONFIG_FROM_MOUNT": "${YNAB_API_TOKEN}",
         ]
     )
     let manager = ConnectorManager(config: config, processEnvironment: ["PATH": "/usr/bin"])
@@ -198,35 +205,36 @@ import Darwin
 }
 
 #if os(macOS)
-@Test func mountedOnePasswordFIFOWithoutWriterDoesNotBlockConnectorResolution() async throws {
-    let root = try temporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
+    @Test func mountedOnePasswordFIFOWithoutWriterDoesNotBlockConnectorResolution() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
 
-    let fifoURL = root.appendingPathComponent("agent.env")
-    #expect(mkfifo(fifoURL.path, S_IRUSR | S_IWUSR) == 0)
+        let fifoURL = root.appendingPathComponent("agent.env")
+        #expect(mkfifo(fifoURL.path, S_IRUSR | S_IWUSR) == 0)
 
-    let connector = Connector(
-        name: "ynab",
-        directoryPath: root.path,
-        configPath: root.appendingPathComponent(".mcp.json").path,
-        command: "node",
-        args: [],
-        env: ["YNAB_ALLOW_WRITES": "1"],
-        importedFrom: root.path,
-        sourceKind: .imported
-    )
-    let config = BridgeportConfig(
-        onePasswordEnvironment: OnePasswordEnvironmentSettings(enabled: true, localEnvFilePath: fifoURL.path),
-        env: [:]
-    )
-    let manager = ConnectorManager(config: config, processEnvironment: ["PATH": "/usr/bin"])
+        let connector = Connector(
+            name: "ynab",
+            directoryPath: root.path,
+            configPath: root.appendingPathComponent(".mcp.json").path,
+            command: "node",
+            args: [],
+            env: ["YNAB_ALLOW_WRITES": "1"],
+            importedFrom: root.path,
+            sourceKind: .imported
+        )
+        let config = BridgeportConfig(
+            onePasswordEnvironment: OnePasswordEnvironmentSettings(
+                enabled: true, localEnvFilePath: fifoURL.path),
+            env: [:]
+        )
+        let manager = ConnectorManager(config: config, processEnvironment: ["PATH": "/usr/bin"])
 
-    let start = Date()
-    let resolved = await manager.resolveEnvironment(for: connector)
+        let start = Date()
+        let resolved = await manager.resolveEnvironment(for: connector)
 
-    #expect(Date().timeIntervalSince(start) < 1)
-    #expect(resolved["YNAB_ALLOW_WRITES"] == "1")
-}
+        #expect(Date().timeIntervalSince(start) < 1)
+        #expect(resolved["YNAB_ALLOW_WRITES"] == "1")
+    }
 #endif
 
 @Test func unusedOnePasswordConfigReferencesAreNotInjectedIntoConnectorEnvironment() async throws {
@@ -249,7 +257,7 @@ import Darwin
         env: [
             "SAFE_FLAG": "enabled",
             "UNUSED_SECRET": "op://Development/Unused/credential",
-            "USED_TOKEN": "from-config"
+            "USED_TOKEN": "from-config",
         ]
     )
     let manager = ConnectorManager(config: config, processEnvironment: ["PATH": "/usr/bin"])
@@ -266,13 +274,16 @@ import Darwin
     defer { try? FileManager.default.removeItem(at: root) }
 
     let pluginDir = root.appendingPathComponent("sample-plugin")
-    try FileManager.default.createDirectory(at: pluginDir.appendingPathComponent(".claude-plugin"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+        at: pluginDir.appendingPathComponent(".claude-plugin"), withIntermediateDirectories: true)
     try """
     {
       "name": "sample-plugin",
       "mcpServers": "./.mcp.json"
     }
-    """.write(to: pluginDir.appendingPathComponent(".claude-plugin/plugin.json"), atomically: true, encoding: .utf8)
+    """.write(
+        to: pluginDir.appendingPathComponent(".claude-plugin/plugin.json"), atomically: true,
+        encoding: .utf8)
 
     try """
     {
@@ -321,21 +332,25 @@ import Darwin
 
     #expect(connectors.count == 1)
     #expect(connectors.first?.name == "node_repl")
-    #expect(connectors.first?.command == "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl")
+    #expect(
+        connectors.first?.command
+            == "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"
+    )
     #expect(connectors.first?.args.last == codexDir.appendingPathComponent("shim.js").path)
     #expect(connectors.first?.env["NODE_PATH"] == "/tmp/node")
     #expect(connectors.first?.requiredEnvVarNames == ["TOKEN_REF"])
 }
 
 @Test func parsesCodexQuotedTablesAndEnvSubtables() {
-    let servers = ConnectorManager.codexMCPServers(fromTOML: """
-    [mcp_servers."quoted.name"]
-    command = 'node'
-    args = ['server.js', '--name=quoted.name']
+    let servers = ConnectorManager.codexMCPServers(
+        fromTOML: """
+            [mcp_servers."quoted.name"]
+            command = 'node'
+            args = ['server.js', '--name=quoted.name']
 
-    [mcp_servers."quoted.name".env]
-    API_TOKEN = "op://Development/Token/credential"
-    """)
+            [mcp_servers."quoted.name".env]
+            API_TOKEN = "op://Development/Token/credential"
+            """)
 
     #expect(servers["quoted.name"]?.command == "node")
     #expect(servers["quoted.name"]?.args == ["server.js", "--name=quoted.name"])
@@ -343,18 +358,19 @@ import Darwin
 }
 
 @Test func parsesCodexMultilineArraysAndInlineEnv() {
-    let servers = ConnectorManager.codexMCPServers(fromTOML: """
-    [mcp_servers.multiline]
-    command = "node"
-    args = [
-      "server.js",
-      "--flag=value",
-    ]
-    env = {
-      "TOKEN_REF" = "${TOKEN_REF}",
-      "NODE_PATH" = "/tmp/node",
-    }
-    """)
+    let servers = ConnectorManager.codexMCPServers(
+        fromTOML: """
+            [mcp_servers.multiline]
+            command = "node"
+            args = [
+              "server.js",
+              "--flag=value",
+            ]
+            env = {
+              "TOKEN_REF" = "${TOKEN_REF}",
+              "NODE_PATH" = "/tmp/node",
+            }
+            """)
 
     #expect(servers["multiline"]?.command == "node")
     #expect(servers["multiline"]?.args == ["server.js", "--flag=value"])
@@ -395,7 +411,7 @@ import Darwin
                 directoryPath: root.path,
                 configPath: root.appendingPathComponent(".mcp.json").path,
                 importedFrom: root.path
-            )
+            ),
         ]
     )
     let manager = ConnectorManager(config: config)
@@ -428,7 +444,8 @@ import Darwin
         port: 8080,
         publicBaseURL: "https://mcp.example.com/",
         connectorSettings: [
-            "mock": BridgeportConnectorSettings(enabled: true, exposePublicly: true, publicPath: "/mock")
+            "mock": BridgeportConnectorSettings(
+                enabled: true, exposePublicly: true, publicPath: "/mock")
         ]
     )
 
@@ -481,7 +498,7 @@ import Darwin
     for url in [
         root.appendingPathComponent("config.json"),
         root.appendingPathComponent("mcp_config.json"),
-        root.appendingPathComponent("cloud_connectors.json")
+        root.appendingPathComponent("cloud_connectors.json"),
     ] {
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         let permissions = try #require(attrs[.posixPermissions] as? NSNumber).intValue & 0o777
@@ -537,8 +554,10 @@ import Darwin
         publicBaseURL: "https://mcp.example.com/",
         allowQueryTokenAuth: true,
         connectorSettings: [
-            "mock": BridgeportConnectorSettings(enabled: true, exposePublicly: true, publicPath: "/mock"),
-            "hidden": BridgeportConnectorSettings(enabled: true, exposePublicly: false, publicPath: "/hidden")
+            "mock": BridgeportConnectorSettings(
+                enabled: true, exposePublicly: true, publicPath: "/mock"),
+            "hidden": BridgeportConnectorSettings(
+                enabled: true, exposePublicly: false, publicPath: "/hidden"),
         ]
     )
 
@@ -550,11 +569,17 @@ import Darwin
 
     #expect(export.claudeCustomConnectors.count == 1)
     #expect(export.claudeCustomConnectors.first?.name == "Mock (BridgePort)")
-    #expect(export.claudeCustomConnectors.first?.remoteMCPServerURL == "https://mcp.example.com/mcp/mock")
+    #expect(
+        export.claudeCustomConnectors.first?.remoteMCPServerURL
+            == "https://mcp.example.com/mcp/mock")
     #expect(export.claudeCustomConnectors.first?.readyForClaudeApp == true)
-    #expect(export.claudeCustomConnectors.first?.authentication == "OAuth 2.1 authorization code with PKCE")
+    #expect(
+        export.claudeCustomConnectors.first?.authentication
+            == "OAuth 2.1 authorization code with PKCE")
     #expect(export.chatGPTCustomApps.count == 1)
-    #expect(export.chatGPTCustomApps.first?.mcpServerURL == "https://mcp.example.com/mcp/mock?token=test-token")
+    #expect(
+        export.chatGPTCustomApps.first?.mcpServerURL
+            == "https://mcp.example.com/mcp/mock?token=test-token")
     #expect(export.chatGPTCustomApps.first?.readyForChatGPT == true)
     #expect(export.anthropicMessagesAPIMCPServers.first?.url == "https://mcp.example.com/mcp/mock")
     #expect(export.anthropicMessagesAPIMCPServers.first?.authorizationToken == "test-token")
@@ -564,14 +589,22 @@ import Darwin
     #expect(export.mistralCustomConnectors.first?.iconURL == "https://mcp.example.com/icons/mock")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.title == "Mock (BridgePort)")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.name == "mock_bridgeport")
-    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.server == "https://mcp.example.com/mcp/mock")
-    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.iconURL == "https://mcp.example.com/icons/mock")
+    #expect(
+        export.mistralCustomConnectors.first?.apiCreatePayload.server
+            == "https://mcp.example.com/mcp/mock")
+    #expect(
+        export.mistralCustomConnectors.first?.apiCreatePayload.iconURL
+            == "https://mcp.example.com/icons/mock")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.visibility == "private")
-    #expect(export.mistralCustomConnectors.first?.apiCreatePayload.headers["Authorization"] == "Bearer test-token")
+    #expect(
+        export.mistralCustomConnectors.first?.apiCreatePayload.headers["Authorization"]
+            == "Bearer test-token")
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.mistralIntegration == false)
     #expect(export.mistralCustomConnectors.first?.apiCreatePayload.privateToolExecution == false)
     #expect(export.vibeCodeMCPServers.first?.transport == "streamable-http")
-    #expect(export.vibeCodeMCPServers.first?.toml.contains("headers = { \"Authorization\" = \"Bearer test-token\" }") == true)
+    #expect(
+        export.vibeCodeMCPServers.first?.toml.contains(
+            "headers = { \"Authorization\" = \"Bearer test-token\" }") == true)
 
     let headerOnlyConfig = BridgeportConfig(
         token: "test-token",
@@ -579,16 +612,23 @@ import Darwin
         publicBaseURL: "https://mcp.example.com/",
         allowQueryTokenAuth: false,
         connectorSettings: [
-            "mock": BridgeportConnectorSettings(enabled: true, exposePublicly: true, publicPath: "/mock")
+            "mock": BridgeportConnectorSettings(
+                enabled: true, exposePublicly: true, publicPath: "/mock")
         ]
     )
-    let headerOnlyExport = ConfigManager.cloudConnectorExport(config: headerOnlyConfig, connectors: [connector])
+    let headerOnlyExport = ConfigManager.cloudConnectorExport(
+        config: headerOnlyConfig, connectors: [connector])
 
     #expect(headerOnlyExport.claudeCustomConnectors.first?.readyForClaudeApp == true)
-    #expect(headerOnlyExport.claudeCustomConnectors.first?.remoteMCPServerURL == "https://mcp.example.com/mcp/mock")
+    #expect(
+        headerOnlyExport.claudeCustomConnectors.first?.remoteMCPServerURL
+            == "https://mcp.example.com/mcp/mock")
     #expect(headerOnlyExport.chatGPTCustomApps.first?.readyForChatGPT == false)
-    #expect(headerOnlyExport.chatGPTCustomApps.first?.mcpServerURL == "https://mcp.example.com/mcp/mock")
-    #expect(headerOnlyExport.anthropicMessagesAPIMCPServers.first?.authorizationToken == "test-token")
+    #expect(
+        headerOnlyExport.chatGPTCustomApps.first?.mcpServerURL == "https://mcp.example.com/mcp/mock"
+    )
+    #expect(
+        headerOnlyExport.anthropicMessagesAPIMCPServers.first?.authorizationToken == "test-token")
 }
 
 @Test func mistralConnectorIconURLIncludesCacheKeyWhenIconAssetExists() throws {
@@ -619,7 +659,8 @@ import Darwin
         port: 8080,
         publicBaseURL: "https://mcp.example.com",
         connectorSettings: [
-            "mock": BridgeportConnectorSettings(enabled: true, exposePublicly: true, publicPath: "/mock")
+            "mock": BridgeportConnectorSettings(
+                enabled: true, exposePublicly: true, publicPath: "/mock")
         ]
     )
 
@@ -666,7 +707,8 @@ import Darwin
         port: 8080,
         publicBaseURL: "https://mcp.example.com",
         connectorSettings: [
-            "ynab-mcp-server": BridgeportConnectorSettings(enabled: true, exposePublicly: true, publicPath: "/ynab")
+            "ynab-mcp-server": BridgeportConnectorSettings(
+                enabled: true, exposePublicly: true, publicPath: "/ynab")
         ]
     )
 
@@ -678,7 +720,8 @@ import Darwin
     #expect(export.name == "YNAB (BridgePort)")
     #expect(export.apiCreatePayload.title == "YNAB (BridgePort)")
     #expect(export.apiCreatePayload.name == "ynab_bridgeport")
-    #expect(ConfigManager.providerDisplayName(for: connector, routePath: "ynab") == "YNAB (BridgePort)")
+    #expect(
+        ConfigManager.providerDisplayName(for: connector, routePath: "ynab") == "YNAB (BridgePort)")
 }
 
 @Test func mistralSafeConnectorNamesMatchAPIContract() {
@@ -695,14 +738,18 @@ import Darwin
 }
 
 @Test func wwwAuthenticateQuotedValuesEscapeUnsafeCharacters() {
-    #expect(SSEServer.wwwAuthenticateQuotedValue("https://example.com/mcp/ynab") == "https://example.com/mcp/ynab")
-    #expect(SSEServer.wwwAuthenticateQuotedValue("https://example.com/quote\"slash\\line\nnext\r") == #"https://example.com/quote\"slash\\linenext"#)
+    #expect(
+        SSEServer.wwwAuthenticateQuotedValue("https://example.com/mcp/ynab")
+            == "https://example.com/mcp/ynab")
+    #expect(
+        SSEServer.wwwAuthenticateQuotedValue("https://example.com/quote\"slash\\line\nnext\r")
+            == #"https://example.com/quote\"slash\\linenext"#)
 }
 
 @Test func initializeResponseGetsConnectorIconMetadataWhenMissing() throws {
     let response = """
-    {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","serverInfo":{"name":"mcp-server-for-ynab","version":"3.0.0"}}}
-    """
+        {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","serverInfo":{"name":"mcp-server-for-ynab","version":"3.0.0"}}}
+        """
     let decorated = BridgeSession.messageWithBridgeportIconMetadata(
         response,
         iconURL: "https://bridgeport.example.com/icons/ynab"
@@ -719,8 +766,8 @@ import Darwin
     #expect(result["serverCardIconUrl"] as? String == "https://bridgeport.example.com/icons/ynab")
 
     let upstreamIconResponse = """
-    {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"mock","icons":[{"src":"https://upstream/icon.png","mimeType":"image/png"}]}}}
-    """
+        {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"mock","icons":[{"src":"https://upstream/icon.png","mimeType":"image/png"}]}}}
+        """
     let preserved = BridgeSession.messageWithBridgeportIconMetadata(
         upstreamIconResponse,
         iconURL: "https://bridgeport.example.com/icons/mock"
@@ -730,23 +777,124 @@ import Darwin
 
 @Test func oauthAccessTokensAreScopedToAuthorizedResource() async {
     let store = OAuthTokenStore()
-    let client = await store.registerClient(clientName: "Probe", redirectURIs: ["http://localhost/callback"])
+    let client = await store.registerClient(
+        clientName: "Probe", redirectURIs: ["http://localhost/callback"])
     let code = await store.issueAuthorizationCode(
         clientID: client.clientID,
         redirectURI: "http://localhost/callback",
         codeChallenge: OAuthSupport.pkceS256Challenge(for: "verifier"),
         resource: "https://bridgeport.example.com/mcp/ynab"
     )
-    let token = await store.redeemAuthorizationCode(
+    let tokenPair = await store.redeemAuthorizationCode(
         code: code ?? "",
         clientID: client.clientID,
         redirectURI: "http://localhost/callback",
         codeVerifier: "verifier"
     )
 
-    #expect(token != nil)
-    #expect(await store.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/ynab"))
-    #expect(!(await store.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/apple-notes")))
+    #expect(tokenPair != nil)
+    #expect(
+        await store.isValidAccessToken(
+            tokenPair?.accessToken ?? "", resource: "https://bridgeport.example.com/mcp/ynab"))
+    #expect(
+        !(await store.isValidAccessToken(
+            tokenPair?.accessToken ?? "", resource: "https://bridgeport.example.com/mcp/apple-notes"
+        )))
+}
+
+@Test func oauthRefreshTokensRotateWithoutReauthorization() async {
+    let store = OAuthTokenStore()
+    let issuedAt = Date(timeIntervalSince1970: 100)
+    let resource = "https://bridgeport.example.com/mcp/apple-notes"
+    let client = await store.registerClient(
+        clientName: "ChatGPT",
+        redirectURIs: ["https://chatgpt.com/connector/oauth/callback"],
+        now: issuedAt
+    )
+    let code = await store.issueAuthorizationCode(
+        clientID: client.clientID,
+        redirectURI: client.redirectURIs[0],
+        codeChallenge: OAuthSupport.pkceS256Challenge(for: "verifier"),
+        resource: resource,
+        now: issuedAt
+    )
+    let initial = await store.redeemAuthorizationCode(
+        code: code ?? "",
+        clientID: client.clientID,
+        redirectURI: client.redirectURIs[0],
+        codeVerifier: "verifier",
+        now: issuedAt
+    )
+    let refreshTime = issuedAt.addingTimeInterval(12 * 60 * 60 + 1)
+
+    #expect(initial != nil)
+    #expect(
+        !(await store.isValidAccessToken(
+            initial?.accessToken ?? "", resource: resource, now: refreshTime)))
+
+    let rotated = await store.redeemRefreshToken(
+        initial?.refreshToken ?? "",
+        clientID: client.clientID,
+        resource: resource,
+        now: refreshTime
+    )
+
+    #expect(rotated != nil)
+    #expect(rotated?.accessToken != initial?.accessToken)
+    #expect(rotated?.refreshToken != initial?.refreshToken)
+    #expect(
+        await store.isValidAccessToken(
+            rotated?.accessToken ?? "", resource: resource, now: refreshTime)
+    )
+    #expect(
+        await store.redeemRefreshToken(
+            initial?.refreshToken ?? "",
+            clientID: client.clientID,
+            resource: resource,
+            now: refreshTime
+        ) == nil
+    )
+}
+
+@Test func oauthRefreshTokensRejectClientAndResourceMismatchWithoutConsumption() async {
+    let store = OAuthTokenStore()
+    let resource = "https://bridgeport.example.com/mcp/apple-notes"
+    let client = await store.registerClient(
+        clientName: "ChatGPT", redirectURIs: ["http://localhost/callback"])
+    let code = await store.issueAuthorizationCode(
+        clientID: client.clientID,
+        redirectURI: "http://localhost/callback",
+        codeChallenge: OAuthSupport.pkceS256Challenge(for: "verifier"),
+        resource: resource
+    )
+    let initial = await store.redeemAuthorizationCode(
+        code: code ?? "",
+        clientID: client.clientID,
+        redirectURI: "http://localhost/callback",
+        codeVerifier: "verifier"
+    )
+
+    #expect(
+        await store.redeemRefreshToken(
+            initial?.refreshToken ?? "",
+            clientID: "wrong-client",
+            resource: resource
+        ) == nil
+    )
+    #expect(
+        await store.redeemRefreshToken(
+            initial?.refreshToken ?? "",
+            clientID: client.clientID,
+            resource: "https://bridgeport.example.com/mcp/ynab"
+        ) == nil
+    )
+    #expect(
+        await store.redeemRefreshToken(
+            initial?.refreshToken ?? "",
+            clientID: client.clientID,
+            resource: resource
+        ) != nil
+    )
 }
 
 @Test func oauthRegisteredClientsPersistAcrossStores() async throws {
@@ -791,7 +939,10 @@ import Darwin
     )
 
     #expect(adopted?.clientID == clientID)
-    #expect(adopted?.redirectURIs == ["https://callback.mistral.ai/v1/integrations_auth/oauth2_callback"])
+    #expect(
+        adopted?.redirectURIs == [
+            "https://callback.mistral.ai/v1/integrations_auth/oauth2_callback"
+        ])
     #expect(badID == nil)
     #expect(badRedirect == nil)
 }
@@ -802,24 +953,37 @@ import Darwin
 
     let tokenStoreURL = root.appendingPathComponent("oauth_tokens.json")
     let firstStore = OAuthTokenStore(accessTokenStoreURL: tokenStoreURL)
-    let client = await firstStore.registerClient(clientName: "Probe", redirectURIs: ["http://localhost/callback"])
+    let client = await firstStore.registerClient(
+        clientName: "Probe", redirectURIs: ["http://localhost/callback"])
     let code = await firstStore.issueAuthorizationCode(
         clientID: client.clientID,
         redirectURI: "http://localhost/callback",
         codeChallenge: OAuthSupport.pkceS256Challenge(for: "verifier"),
         resource: "https://bridgeport.example.com/mcp/ynab"
     )
-    let token = await firstStore.redeemAuthorizationCode(
+    let tokenPair = await firstStore.redeemAuthorizationCode(
         code: code ?? "",
         clientID: client.clientID,
         redirectURI: "http://localhost/callback",
         codeVerifier: "verifier"
     )
-    #expect(token != nil)
+    #expect(tokenPair != nil)
 
     let reloadedStore = OAuthTokenStore(accessTokenStoreURL: tokenStoreURL)
-    #expect(await reloadedStore.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/ynab"))
-    #expect(!(await reloadedStore.isValidAccessToken(token ?? "", resource: "https://bridgeport.example.com/mcp/apple-notes")))
+    #expect(
+        await reloadedStore.isValidAccessToken(
+            tokenPair?.accessToken ?? "", resource: "https://bridgeport.example.com/mcp/ynab"))
+    #expect(
+        !(await reloadedStore.isValidAccessToken(
+            tokenPair?.accessToken ?? "", resource: "https://bridgeport.example.com/mcp/apple-notes"
+        )))
+    #expect(
+        await reloadedStore.redeemRefreshToken(
+            tokenPair?.refreshToken ?? "",
+            clientID: client.clientID,
+            resource: "https://bridgeport.example.com/mcp/ynab"
+        ) != nil
+    )
 
     let attrs = try FileManager.default.attributesOfItem(atPath: tokenStoreURL.path)
     let permissions = try #require(attrs[.posixPermissions] as? NSNumber).intValue & 0o777
@@ -858,7 +1022,9 @@ import Darwin
         importedFrom: "/tmp",
         sourceKind: .imported
     )
-    let session = BridgeSession(id: "idle-test", connectorName: "idle", bridge: ProcessBridge(connector: connector, env: [:]))
+    let session = BridgeSession(
+        id: "idle-test", connectorName: "idle",
+        bridge: ProcessBridge(connector: connector, env: [:]))
 
     #expect(await session.isIdle(olderThan: -1))
     #expect(!(await session.isIdle(olderThan: 3600)))
@@ -894,9 +1060,12 @@ import Darwin
     let token = ConfigManager.generateSecureToken()
     #expect(token.hasPrefix("ames_"))
     #expect(token.count >= 48)
-    #expect(token.allSatisfy { character in
-        character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == "-")
-    })
+    #expect(
+        token.allSatisfy { character in
+            character.isASCII
+                && (character.isLetter || character.isNumber || character == "_"
+                    || character == "-")
+        })
 }
 
 @Test func processBridgeUsesPortableEnvLaunchArguments() {
@@ -921,10 +1090,14 @@ import Darwin
         stdoutPath: "/tmp/bridgeport & release/stdout.log",
         stderrPath: "/tmp/bridgeport & release/stderr.log"
     )
-    let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+    let plist = try #require(
+        PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
 
     #expect(plist["Label"] as? String == "com.oliverames.bridgeport")
-    #expect(plist["ProgramArguments"] as? [String] == ["/tmp/bridgeport & release/bin/bridgeport", "--server"])
+    #expect(
+        plist["ProgramArguments"] as? [String] == [
+            "/tmp/bridgeport & release/bin/bridgeport", "--server",
+        ])
     #expect(plist["StandardOutPath"] as? String == "/tmp/bridgeport & release/stdout.log")
     #expect(plist["StandardErrorPath"] as? String == "/tmp/bridgeport & release/stderr.log")
 }
@@ -944,12 +1117,13 @@ import Darwin
 }
 
 @Test func cloudflareSettingsNormalizeTildePaths() {
-    let settings = ConfigManager.normalizedCloudflareSettings(CloudflareSettings(
-        enabled: true,
-        credentialsFilePath: "~/.cloudflared/bridgeport.json",
-        configFilePath: "~/.config/bridgeport/cloudflared/config.yml",
-        cloudflaredPath: "~/bin/cloudflared"
-    ))
+    let settings = ConfigManager.normalizedCloudflareSettings(
+        CloudflareSettings(
+            enabled: true,
+            credentialsFilePath: "~/.cloudflared/bridgeport.json",
+            configFilePath: "~/.config/bridgeport/cloudflared/config.yml",
+            cloudflaredPath: "~/bin/cloudflared"
+        ))
 
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     #expect(settings.credentialsFilePath == "\(home)/.cloudflared/bridgeport.json")
@@ -958,11 +1132,12 @@ import Darwin
 }
 
 @Test func cloudflareNormalizationPreservesExplicitUserIdentity() {
-    let settings = ConfigManager.normalizedCloudflareSettings(CloudflareSettings(
-        profileName: "Existing deployment",
-        domain: "gateway.example.org",
-        hostname: "mcp.gateway.example.org"
-    ))
+    let settings = ConfigManager.normalizedCloudflareSettings(
+        CloudflareSettings(
+            profileName: "Existing deployment",
+            domain: "gateway.example.org",
+            hostname: "mcp.gateway.example.org"
+        ))
 
     #expect(settings.profileName == "Existing deployment")
     #expect(settings.domain == "gateway.example.org")
@@ -998,16 +1173,18 @@ import Darwin
         stdoutPath: "/Users/example/.config/bridgeport/cloudflared_stdout.log",
         stderrPath: "/Users/example/.config/bridgeport/cloudflared_stderr.log"
     )
-    let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+    let plist = try #require(
+        PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
 
     #expect(plist["Label"] as? String == "com.oliverames.bridgeport.cloudflared")
-    #expect(plist["ProgramArguments"] as? [String] == [
-        "/opt/homebrew/bin/cloudflared",
-        "tunnel",
-        "--config",
-        "/Users/example/.config/bridgeport/cloudflared/config.yml",
-        "run"
-    ])
+    #expect(
+        plist["ProgramArguments"] as? [String] == [
+            "/opt/homebrew/bin/cloudflared",
+            "tunnel",
+            "--config",
+            "/Users/example/.config/bridgeport/cloudflared/config.yml",
+            "run",
+        ])
     #expect(plist["KeepAlive"] as? Bool == true)
     #expect(plist["RunAtLoad"] as? Bool == true)
 }
@@ -1078,11 +1255,14 @@ import Darwin
     #expect(candidatePaths.contains("/tmp/mock/icon.png"))
     #expect(candidatePaths.contains("/tmp/mock/logo.svg"))
     // Bundled source repo icons must stay ahead of wrapper-level icons.
-    #expect(candidatePaths.firstIndex(of: "/tmp/mock/sources/mock/assets/icon.png")! < candidatePaths.firstIndex(of: "/tmp/mock/assets/icon.png")!)
+    #expect(
+        candidatePaths.firstIndex(of: "/tmp/mock/sources/mock/assets/icon.png")!
+            < candidatePaths.firstIndex(of: "/tmp/mock/assets/icon.png")!)
 }
 
 private func temporaryDirectory() throws -> URL {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("bridgeport-tests-\(UUID().uuidString)")
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "bridgeport-tests-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     return root
 }
