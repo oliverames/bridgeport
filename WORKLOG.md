@@ -1,3 +1,17 @@
+## 2026-07-22 - OAuth refresh recovery, 1.0.11, and signed appcast
+
+**What changed**: Released Bridgeport 1.0.11 with rotating OAuth refresh tokens so connector clients can renew expired access tokens without repeating authorization. After a MacBook Pro exposed Sparkle's "update feed is improperly signed" error, corrected the appcast publication path: Bridgeport opts into `SURequireSignedFeed`, so the complete appcast now receives a separate EdDSA signature in addition to each update archive's enclosure signature. Added `script/sign_appcast.sh` and documented the required sign-and-verify step in `RELEASING.md`.
+
+**Decisions made**: Kept signed-feed enforcement enabled. The feed-only correction did not require rebuilding or retagging 1.0.11 because installed clients fetch the corrected appcast independently of the release archive.
+
+**Verification**: `swift test` passed all 46 tests. GitHub release `v1.0.11` is public with the DMG and SHA-256 asset; the published checksum is `3e484e01b9a40f57c2b40c7ae318bf7c7fe11122aa6ba817c861e221123a5a5c`. Sparkle's `sign_update --verify --account bridgeport` accepts the exact public appcast URL.
+
+**Left off at**: Version 1.0.11 is live. Commits `949d713` and `4310700` are pushed to `main`, and the working tree is clean.
+
+**Open questions**: **Resolved this session:** sweetrb/apple-notes-mcp PR #86 is closed without merge, so it is no longer awaiting review. **Still open:** decide whether Bridgeport should cap or serialize concurrent connector subprocesses. **NEW:** none.
+
+---
+
 ## 2026-07-20 - Bridge iconography for app icon and menu bar
 
 **What changed**: Both icons now depict a suspension bridge (f20dd08). Verified empirically that SF Symbols has no bridge glyph (`NSImage(systemSymbolName:)` probes plus a grep of the CoreGlyphs `name_availability.plist` catalog), so the menu bar icon is a hand-drawn 18pt template `NSImage` (`BridgeMenuBarIcon` in `BridgeportApp.swift`), replacing `app.connected.to.app.below` and its `bolt` fallback. Daemon state maps to alpha: full when running, 0.45 when stopped, which template rendering shows as a dimmed icon. `script/generate_app_icon.swift` dropped the network-route overlay and node dots so the bridge is the sole subject; `AppIcon.icns` and the full iconset were regenerated.
