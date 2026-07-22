@@ -45,7 +45,13 @@ Every release must also be signed for Sparkle and appended to `appcast.xml` on `
   dist/release/Bridgeport-1.0.6.dmg --account bridgeport
 ```
 
-The EdDSA private key lives in the login Keychain under the `bridgeport` account (created with `generate_keys --account bridgeport`; the matching `SUPublicEDKey` is embedded in both Info.plist heredocs). Add an `<item>` to `appcast.xml` with the new version, the GitHub release download URL as the enclosure, and the `sparkle:edSignature` and `length` values printed by `sign_update`. Commit the appcast with the release-notes commit so the feed and the tag land together.
+The EdDSA private key lives in the login Keychain under the `bridgeport` account (created with `generate_keys --account bridgeport`; the matching `SUPublicEDKey` is embedded in both Info.plist heredocs). Add an `<item>` to `appcast.xml` with the new version, the GitHub release download URL as the enclosure, and the `sparkle:edSignature` and `length` values printed by `sign_update`. Then sign and verify the complete feed before committing it:
+
+```bash
+script/sign_appcast.sh
+```
+
+`SURequireSignedFeed` makes this second signature mandatory. The enclosure signature protects the downloaded update archive; it does not sign the appcast XML. Commit the signed appcast with the release-notes commit so the feed and the tag land together.
 
 ## Publish
 

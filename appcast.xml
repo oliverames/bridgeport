@@ -1,5 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
   <channel>
     <title>Bridgeport Updates</title>
     <link>https://raw.githubusercontent.com/oliverames/bridgeport/main/appcast.xml</link>
@@ -21,11 +22,7 @@
         </ul>
       ]]></description>
       <pubDate>Wed, 22 Jul 2026 10:06:44 -0400</pubDate>
-      <enclosure
-        url="https://github.com/oliverames/bridgeport/releases/download/v1.0.11/Bridgeport-1.0.11.dmg"
-        sparkle:edSignature="nt8ruwBXmJwHKSlgsnd+cqF1H34V9V6DuGztw3NxfMeuPSYfkIvdBpPoHMHZou0N0ZQRlA1VKj4pA3+irDB8Ag=="
-        length="3551937"
-        type="application/octet-stream"/>
+      <enclosure url="https://github.com/oliverames/bridgeport/releases/download/v1.0.11/Bridgeport-1.0.11.dmg" sparkle:edSignature="nt8ruwBXmJwHKSlgsnd+cqF1H34V9V6DuGztw3NxfMeuPSYfkIvdBpPoHMHZou0N0ZQRlA1VKj4pA3+irDB8Ag==" length="3551937" type="application/octet-stream"></enclosure>
     </item>
     <item>
       <title>Version 1.0.9</title>
@@ -43,11 +40,10 @@
         </ul>
       ]]></description>
       <pubDate>Tue, 21 Jul 2026 12:20:00 -0400</pubDate>
-      <enclosure
-        url="https://github.com/oliverames/bridgeport/releases/download/v1.0.9/Bridgeport-1.0.9.dmg"
-        sparkle:edSignature="jjLXxEVPYOBv9dakK6fPtp+Adta4+uIHzbGxUNb2ILllWyr7US0Evvg/0+zWQE+qiVnqkQAh/OD09gjqlUt1Bw=="
-        length="3544770"
-        type="application/octet-stream"/>
+      <enclosure url="https://github.com/oliverames/bridgeport/releases/download/v1.0.9/Bridgeport-1.0.9.dmg" sparkle:edSignature="jjLXxEVPYOBv9dakK6fPtp+Adta4+uIHzbGxUNb2ILllWyr7US0Evvg/0+zWQE+qiVnqkQAh/OD09gjqlUt1Bw==" length="3544770" type="application/octet-stream"></enclosure>
     </item>
   </channel>
-</rss>
+</rss><!-- sparkle-signatures:
+edSignature: vc53ka/prmNYCRbtFsR9S4cB2NHQVhAcZ1CZDFrQ9keg+JeuTNa+1oD6xWIoXKluEO2Dxi5ZMeTtSF6yGAJFCA==
+length: 3107
+-->
