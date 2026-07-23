@@ -16,6 +16,7 @@ public final class AppState {
     public var publicBaseURL: String = ""
     public var allowedOriginsText: String = ""
     public var allowQueryTokenAuth: Bool = false
+    public var showDockIcon: Bool = false
     public var token: String = ""
     public var env: [String: String] = [:]
     public var launchAtLoginEnabled: Bool = false
@@ -468,6 +469,7 @@ public final class AppState {
             bindHost: bindHost,
             allowedOrigins: allowedOrigins,
             allowQueryTokenAuth: allowQueryTokenAuth,
+            showDockIcon: showDockIcon,
             connectorsPath: connectorsPath,
             additionalConnectorPaths: additionalConnectorPaths,
             importedConnectors: importedConnectors,
@@ -548,6 +550,7 @@ public final class AppState {
         publicBaseURL = config.publicBaseURL ?? ""
         allowedOriginsText = (config.allowedOrigins ?? ConfigManager.defaultAllowedOrigins(port: config.port ?? 8080, publicBaseURL: config.publicBaseURL)).joined(separator: "\n")
         allowQueryTokenAuth = config.allowQueryTokenAuth ?? false
+        showDockIcon = config.showDockIcon ?? false
         token = config.token ?? ""
         env = config.env ?? [:]
         importedConnectors = config.importedConnectors ?? [:]

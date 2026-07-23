@@ -5,9 +5,12 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate, Sendable {
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Run as an accessory app (menu bar only, no Dock icon)
         NSWindow.allowsAutomaticWindowTabbing = false
-        NSApp.setActivationPolicy(.accessory)
+        // Default to accessory (menu bar only, no Dock icon). The user
+        // can opt in to a persistent Dock icon from the Settings dashboard;
+        // SettingsWindowCoordinator adjusts the policy at launch once the
+        // AppState has loaded the saved preference.
+        NSApp.setActivationPolicy(SettingsWindowCoordinator.shared.currentActivationPolicy())
         DispatchQueue.main.async {
             SettingsWindowCoordinator.shared.installAppMenuItem()
             SettingsWindowCoordinator.shared.openSettingsIfRequested()

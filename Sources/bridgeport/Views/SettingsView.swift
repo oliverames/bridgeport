@@ -263,6 +263,21 @@ struct SettingsView: View {
                 .onAppear {
                     appState.refreshLaunchAtLoginStatus()
                 }
+
+                Divider()
+
+                Toggle(isOn: $appState.showDockIcon) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show app icon in Dock")
+                        Text("Keep Bridgeport visible in the Dock while running. When off, the app lives in the menu bar only.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onChange(of: appState.showDockIcon) {
+                    Task { await appState.save(restartDaemon: false) }
+                    SettingsWindowCoordinator.shared.updateActivationPolicy()
+                }
             }
 
             SettingsGroup(title: "Endpoints") {

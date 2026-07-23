@@ -220,6 +220,7 @@ public struct BridgeportConfig: Codable, Sendable {
     public var allowedOrigins: [String]?
     public var allowQueryTokenAuth: Bool?
     public var connectorsPath: String?
+    public var showDockIcon: Bool?
     public var additionalConnectorPaths: [String]?
     public var importedConnectors: [String: BridgeportImportedConnector]?
     public var connectorSettings: [String: BridgeportConnectorSettings]?
@@ -235,6 +236,7 @@ public struct BridgeportConfig: Codable, Sendable {
         bindHost: String? = nil,
         allowedOrigins: [String]? = nil,
         allowQueryTokenAuth: Bool? = nil,
+        showDockIcon: Bool? = nil,
         connectorsPath: String? = nil,
         additionalConnectorPaths: [String]? = nil,
         importedConnectors: [String: BridgeportImportedConnector]? = nil,
@@ -250,6 +252,7 @@ public struct BridgeportConfig: Codable, Sendable {
         self.bindHost = bindHost
         self.allowedOrigins = allowedOrigins
         self.allowQueryTokenAuth = allowQueryTokenAuth
+        self.showDockIcon = showDockIcon
         self.connectorsPath = connectorsPath
         self.additionalConnectorPaths = additionalConnectorPaths
         self.importedConnectors = importedConnectors
@@ -374,6 +377,11 @@ public actor ConfigManager {
 
             if config.allowQueryTokenAuth == nil {
                 config.allowQueryTokenAuth = false
+                shouldSave = true
+            }
+
+            if config.showDockIcon == nil {
+                config.showDockIcon = false
                 shouldSave = true
             }
 
@@ -670,6 +678,7 @@ public actor ConfigManager {
             bindHost: "127.0.0.1",
             allowedOrigins: defaultAllowedOrigins(port: 8080, publicBaseURL: ""),
             allowQueryTokenAuth: false,
+            showDockIcon: false,
             connectorsPath: primaryConnectorsPath,
             additionalConnectorPaths: defaultAdditionalConnectorPaths(excluding: primaryConnectorsPath),
             importedConnectors: [:],

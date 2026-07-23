@@ -11,6 +11,7 @@ final class SettingsWindowCoordinator: NSObject {
 
     func configure(appState: AppState) {
         self.appState = appState
+        NSApp.setActivationPolicy(currentActivationPolicy())
         guard Self.launchRequestedSettingsWindow() else { return }
         DispatchQueue.main.async { [weak self] in
             self?.openSettingsIfRequested()
@@ -64,6 +65,16 @@ final class SettingsWindowCoordinator: NSObject {
 
     @objc private func openSettingsFromMenu(_ sender: Any?) {
         openSettingsWindow()
+    }
+
+    func currentActivationPolicy() -> NSApplication.ActivationPolicy {
+        guard let appState else { return .accessory }
+        return appState.showDockIcon ? .regular : .accessory
+    }
+
+    func updateActivationPolicy() {
+        if windowController?.window?.isVisible == true { return }
+        NSApp.setActivationPolicy(currentActivationPolicy())
     }
 
     private static func launchRequestedSettingsWindow(arguments: [String] = CommandLine.arguments) -> Bool {
@@ -123,6 +134,6 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(SettingsWindowCoordinator.shared.currentActivationPolicy())
     }
 }
