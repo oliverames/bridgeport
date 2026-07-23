@@ -1,3 +1,17 @@
+## 2026-07-23 - Show/hide Dock icon toggle, 1.0.12 release
+
+**What changed**: Added a user-facing "Show app icon in Dock" toggle in the Settings dashboard (Service group). The setting persists in `config.json` as `showDockIcon` (defaults to `false`, preserving the existing menu-bar-only accessory behavior). When enabled, the app uses `NSApplication.ActivationPolicy.regular` so the Dock icon stays visible while running. Opening the Settings window temporarily forces `.regular` regardless; closing it restores the user's preference. Toggling applies immediately via `SettingsWindowCoordinator.updateActivationPolicy()` unless the settings window is open. Released as **1.0.12**: tagged, signed, notarized, clean-install verified, Sparkle appcast updated and signed, GitHub release published with DMG + SHA-256.
+
+**Decisions made**: Default to off so existing behavior is unchanged. The activation policy is read at launch from the saved config, so a restart is needed if toggled while the settings window is closed and the app is already running without it. Kept the settings window forced to `.regular` while open so it gets proper window-manager attention.
+
+**Verification**: `swift test` 46/46, `test_client.py` all tests passed, `swift build -c release` clean, Gitleaks 43 commits no leaks, `package_release.sh 1.0.12` signed, `notarize_release.sh` accepted and stapled, `verify_clean_install.sh --require-notarized` passed, `sign_update` EdDSA signature generated, `sign_appcast.sh` signed and verified.
+
+**Left off at**: Version 1.0.12 is live. Commits `b3765dd` (feature) and `019ea0a` (release) pushed to `main`, tag `v1.0.12` pushed. Working tree clean.
+
+**Open questions**: **Still open:** decide whether Bridgeport should cap or serialize concurrent connector subprocesses. **NEW:** none.
+
+---
+
 ## 2026-07-22 - OAuth refresh recovery, 1.0.11, and signed appcast
 
 **What changed**: Released Bridgeport 1.0.11 with rotating OAuth refresh tokens so connector clients can renew expired access tokens without repeating authorization. After a MacBook Pro exposed Sparkle's "update feed is improperly signed" error, corrected the appcast publication path: Bridgeport opts into `SURequireSignedFeed`, so the complete appcast now receives a separate EdDSA signature in addition to each update archive's enclosure signature. Added `script/sign_appcast.sh` and documented the required sign-and-verify step in `RELEASING.md`.
